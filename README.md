@@ -27,7 +27,7 @@ invoking user.
 | OS         | Arch-based distro with systemd-udev >= 258    | `udevadm test -D` was added in 258; developed against 261    |
 | Shell      | fish >= 3.6                                   | uses `string match -g` (3.4) and `string split -f` (3.2)     |
 | Privileges | sudo for `--install` only                     | `--check` and `--verify` never elevate                       |
-| Tools      | coreutils                                     | `install`, `mv -T`, `mkdir`, `mktemp`, `sha256sum`, `date`   |
+| Tools      | coreutils                                     | `install`, `mv -T`, `mkdir`, `mktemp`, `sha256sum`, `date`, `touch`, `chmod` |
 | Optional   | diffutils, acl                                | diff display; `getfacl` ACL display (acl is a systemd dep)   |
 | Browser    | native Chrome, Chromium or Edge               | WebHID and WebUSB; Snap and Flatpak sandboxes need device access |
 | Keyboard   | any Launcher board or receiver, VID `3434`    | QMK-based HE and Max boards flash through the STM32 DFU bootloader; ZMK-based Ultra boards are not verified |
@@ -54,15 +54,28 @@ the dry-run has a real hidraw node to prove the rule against. Then open
 
 | Flag              | Action                                                                                        | Elevates |
 |-------------------|-----------------------------------------------------------------------------------------------|----------|
-| `-c`, `--check`   | default; list Keychron USB devices and USB-bus hidraw nodes, compare the installed rule       | no       |
+| `-c`, `--check`   | default; list Keychron USB devices and USB-bus hidraw nodes, compare the installed rule; no system change | no       |
 | `-i`, `--install` | dry-run, back up and diff an existing file, write, reload, re-add live nodes, verify          | sudo     |
 | `-v`, `--verify`  | confirm read-write access for the current user on every Keychron hidraw node and DFU device  | no       |
 | `-h`, `--help`    | usage                                                                                         | no       |
 | `-V`, `--version` | version                                                                                       | no       |
 
 All diagnostics go to stderr; stdout carries only `--help` and `--version`.
-Color is used only on a terminal and is disabled by a non-empty `NO_COLOR` or
-by `TERM=dumb`.
+Every line is also appended with a timestamp to the run log (see Files), and
+the log path is printed as the last line of a run. Color is used only on a
+terminal and is disabled by a non-empty `NO_COLOR` or by `TERM=dumb`.
+
+## Files
+
+| Path                                                     | Purpose                                   | Mode      |
+|----------------------------------------------------------|-------------------------------------------|-----------|
+| `/etc/udev/rules.d/70-keychron.rules`                    | the installed rule                        | 0644 root |
+| `$XDG_STATE_HOME/keychron-udev/keychron-udev.log`        | append-only run log, one line per message | 0600      |
+| `$XDG_STATE_HOME/keychron-udev/<timestamp>-70-keychron.rules.bak` | backup of a replaced rule file   | 0644      |
+| `$XDG_RUNTIME_DIR/keychron-udev.lock`                    | lock directory held during `--install`    | dir       |
+
+`XDG_STATE_HOME` defaults to `~/.local/state`; `XDG_RUNTIME_DIR` falls back to
+`/tmp`. The state directory is created 0700.
 
 ## Exit Codes
 
@@ -137,8 +150,9 @@ getfacl -p /dev/hidrawN
 sha256sum keychron-udev.fish
 ```
 
-`jq` is optional; the raw JSON is readable as is. In Chrome,
-`chrome://device-log` lists every HID and USB access attempt with its error.
+`jq` is optional; the raw JSON is readable as is. The run log keeps every
+line of every run for later comparison. In Chrome, `chrome://device-log` lists
+every HID and USB access attempt with its error.
 
 ## Uninstall
 
@@ -148,7 +162,7 @@ sudo udevadm control --reload
 ```
 
 Existing device nodes keep their ACL until they are re-added; unplug and replug
-the board, or reboot. Backups in `$XDG_STATE_HOME/keychron-udev` are yours to
+the board, or reboot. Backups and the run log in `$XDG_STATE_HOME/keychron-udev` are yours to
 delete.
 
 ## Troubleshooting
@@ -206,9 +220,9 @@ Bluetooth-bus Keychron node and a Logitech node as negative controls, and stub
 backup, the three dry-run failure paths (no JSON, no tag, no queued builtin),
 verify denial, lock contention, the preflight gates, root refusal, argparse
 errors, SIGPIPE on `--help`, the color gate on a pty, a write failure that
-leaves no `.tmp` behind, `|` in sysfs strings, empty `XDG_*` variables, and
-SIGINT/SIGTERM/SIGHUP during `sudo -v` (exit 130/143/129, nothing written,
-lock and temp removed).
+leaves no `.tmp` behind, `|` in sysfs strings, empty `XDG_*` variables, the
+run-log mirror (0600, header line per run), and SIGINT/SIGTERM/SIGHUP during
+`sudo -v` (exit 130/143/129, nothing written, lock and temp removed).
 The privileged command sequence recorded by the stubs is exactly: `sudo -v`,
 one `udevadm test --json=short -D` per node, `install -m 0644` to `.tmp`,
 `mv -T`, `udevadm control --reload`, `udevadm trigger --action=add --settle`.

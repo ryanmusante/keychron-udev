@@ -19,5 +19,7 @@
     DFU), both TAG+="uaccess", file number 70 so 73-seat-late.rules applies it
   - signals: INT/TERM/HUP exit 130/143/129 after cleanup; mkdir lock under
     XDG_RUNTIME_DIR; temp dir removed on exit
+  - logging: every stderr line is mirrored with a timestamp to
+    $XDG_STATE_HOME/keychron-udev/keychron-udev.log (0600); path shown at exit
   - output: diagnostics on stderr, stdout only for --help and --version; color
     only on a tty, disabled by non-empty NO_COLOR or TERM=dumb

@@ -1,0 +1,269 @@
+#!/usr/bin/env fish
+# keychron-udev.fish 1.0.0 (2026-08-26): udev access for Keychron Launcher (WebHID) and STM32 DFU flashing (WebUSB)
+# Exit codes: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift (--check) / 5 verify failed
+
+set -g VERSION 1.0.0
+set -g RULE 70-keychron.rules
+set -g KC_VID 3434
+set -g DFU_VID 0483
+set -g DFU_PID df11
+set -g SYSFS /sys
+set -g DEVFS /dev
+set -g RULES_DIR /etc/udev/rules.d
+set -g SEAT_LATE /usr/lib/udev/rules.d/73-seat-late.rules
+test -n "$XDG_STATE_HOME"; or set -l XDG_STATE_HOME $HOME/.local/state
+set -g STATE_DIR $XDG_STATE_HOME/keychron-udev
+set -g _TMP ''
+set -g _LOCK ''
+set -g _SIG 0
+
+# a signal only records its number; the next message exits 128+N from the main flow (exit inside a handler yields rc 0)
+function _msg --argument-names lvl
+    test $_SIG -eq 0; or exit (math 128 + $_SIG)
+    set -l c ''
+    set -l r ''
+    if test -t 2; and test -z "$NO_COLOR"; and test "$TERM" != dumb
+        set -l map OK green WARN yellow FAIL red INFO blue
+        set -l i (contains -i -- $lvl $map)
+        test -n "$i"; and set c (set_color $map[(math $i + 1)])
+        set r (set_color normal)
+    end
+    printf '%s%-4s%s %s\n' "$c" $lvl "$r" "$argv[2..-1]" >&2
+end
+
+function _die --argument-names code
+    _msg FAIL $argv[2..-1]
+    exit $code
+end
+
+function _cleanup --on-event fish_exit
+    test -n "$_TMP"; and rm -rf --preserve-root -- $_TMP
+    test -n "$_LOCK"; and rmdir -- $_LOCK 2>/dev/null
+end
+function _sig_int --on-signal INT; set -g _SIG 2; end
+function _sig_term --on-signal TERM; set -g _SIG 15; end
+function _sig_hup --on-signal HUP; set -g _SIG 1; end
+
+function _usage
+    printf '%s\n' \
+        "keychron-udev.fish $VERSION: udev access for Keychron Launcher (WebHID) and STM32 DFU firmware flashing (WebUSB)" \
+        'Usage: keychron-udev.fish [-c|--check | -i|--install | -v|--verify] [-h|--help] [-V|--version]' \
+        "  --check    (default) list Keychron USB devices and compare $RULE with the expected rule; read-only, no sudo" \
+        '  --install  dry-run the candidate with udevadm test -D, back up and diff any existing file, write it atomically,' \
+        '             reload udev, re-add the live nodes, verify' \
+        '  --verify   confirm the current user has rw on every Keychron hidraw node (and on an STM32 DFU device if present)' \
+        'Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift (--check) / 5 verify failed' \
+        'Env:  NO_COLOR (non-empty) or TERM=dumb disable color' \
+        'Then: https://launcher.keychron.com/ in Chrome, board on the cable with the toggle on Cable, Connect, Firmware Update;' \
+        '      chrome://device-log lists HID/USB access errors if the Launcher cannot see the board'
+end
+
+# sysfs attribute or empty; callers quote the result so an empty read cannot shift printf arguments
+function _attr --argument-names f
+    test -r $f; and string trim -- (cat -- $f)
+end
+
+# lines: vid:pid|product|manufacturer|busnum|devnum for one vendor, narrowed to one product when pid is given
+function _usb_list --argument-names vid pid
+    for f in $SYSFS/bus/usb/devices/*/idVendor
+        set -l d (dirname -- $f)
+        set -l v (_attr $f)
+        set -l p (_attr $d/idProduct)
+        test "$v" = $vid; or continue
+        test -n "$pid"; and test "$p" != $pid; and continue
+        set -l prod (_attr $d/product | string replace -a -- '|' '/')
+        set -l mfr (_attr $d/manufacturer | string replace -a -- '|' '/')
+        set -l bus (_attr $d/busnum)
+        set -l num (_attr $d/devnum)
+        printf '%s:%s|%s|%s|%s|%s\n' $vid "$p" "$prod" "$mfr" "$bus" "$num"
+    end
+end
+
+# lines: /dev/hidrawN|pid|HID_NAME, USB bus only; Bluetooth HID (bus 0005) has no idVendor attribute and is never rule-matched
+function _hidraw_list
+    for u in $SYSFS/class/hidraw/hidraw*/device/uevent
+        set -l node (string replace -r -- '^.*/(hidraw[0-9]+)/device/uevent$' '$1' $u)
+        set -l lines (cat -- $u)
+        set -l id (string match -rg -- '^HID_ID=0003:0000([0-9A-Fa-f]{4}):0000([0-9A-Fa-f]{4})$' $lines)
+        test (count $id) -eq 2; and test (string lower -- $id[1]) = $KC_VID; or continue
+        set -l name (string match -rg -- '^HID_NAME=(.*)$' $lines | string replace -a -- '|' '/')
+        printf '%s|%s|%s\n' $DEVFS/$node (string lower -- $id[2]) "$name"
+    end
+end
+
+function _rule_text
+    printf '%s\n' \
+        "# $RULE: written by keychron-udev.fish; keep the number below 73, 73-seat-late.rules turns the uaccess tag into an ACL" \
+        '# Keychron Launcher (WebHID): raw HID on Keychron USB devices, including the 2.4 GHz Link receiver' \
+        "SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"$KC_VID\", MODE=\"0660\", TAG+=\"uaccess\"" \
+        '# Launcher firmware flash (WebUSB): STM32 ROM DFU bootloader the board re-enumerates as' \
+        "SUBSYSTEM==\"usb\", ATTRS{idVendor}==\"$DFU_VID\", ATTRS{idProduct}==\"$DFU_PID\", TAG+=\"uaccess\""
+end
+
+function _sha --argument-names f
+    sha256sum -- $f | string sub -l 64
+end
+
+function _diff --argument-names old new
+    command -q diff; and diff -u -- $old $new >&2
+    return 0
+end
+
+function _preflight --argument-names mode
+    test (id -u) -ne 0; or _die 2 'run as your desktop user, not root; sudo is invoked where needed'
+    command -q udevadm; or _die 3 'udevadm not found'
+    test -d $SYSFS/bus/usb/devices; or _die 3 "no USB sysfs under $SYSFS"
+    test -d $RULES_DIR; or _die 3 "missing $RULES_DIR"
+    test -e $SEAT_LATE; or _msg WARN "$SEAT_LATE missing: nothing would apply the uaccess ACL on this system"
+    test "$mode" = install; or return 0
+    command -q sudo; or _die 3 'sudo not found'
+    set -l ver (udevadm --version | string match -r -- '^[0-9]+')
+    test -n "$ver"; and test $ver -ge 258; or _die 3 "udevadm test -D needs systemd >= 258 (found: $ver)"
+end
+
+# proof before writing: the rule must add the uaccess tag AND 73-seat-late.rules must still queue the uaccess builtin
+function _dry_run --argument-names node extra
+    set -l opts --json=short
+    test -n "$extra"; and set -a opts -D $extra
+    set -l json (sudo udevadm test $opts $node 2>/dev/null | string collect)
+    set -l why
+    test -n "$json"; or set why 'udevadm test produced no JSON'
+    test -n "$why"; or string match -qr -- '"tags":\[[^]]*"uaccess"' $json; or set why 'rule did not add the uaccess tag'
+    test -n "$why"; or string match -qr -- '"command":"uaccess"' $json
+    or set why 'tag set, but no uaccess builtin queued (rule file sorting after 73-seat-late.rules?)'
+    if test -n "$why"
+        _msg FAIL "$node: $why"
+        return 1
+    end
+    _msg OK "$node: uaccess tag set and ACL builtin queued"
+end
+
+function _inventory
+    set -l usb (_usb_list $KC_VID)
+    test (count $usb) -gt 0; or _msg WARN 'no Keychron USB device present: cable mode with the toggle on Cable, or the receiver plugged in'
+    for u in $usb
+        set -l f (string split -- '|' $u)
+        _msg INFO "usb $f[1] $f[2] ($f[3]) bus $f[4] dev $f[5]"
+    end
+    for h in (_hidraw_list)
+        set -l f (string split -- '|' $h)
+        _msg INFO "hidraw $f[1] pid $f[2] ($f[3])"
+    end
+end
+
+function _check
+    _inventory
+    set -l dst $RULES_DIR/$RULE
+    _rule_text > $_TMP/$RULE
+    if not test -e $dst
+        _msg WARN "$dst missing; --install writes:"
+        cat -- $_TMP/$RULE >&2
+        return 4
+    end
+    if test (_sha $dst) != (_sha $_TMP/$RULE)
+        _msg WARN "$dst differs from the expected rule (installed -> expected):"
+        _diff $dst $_TMP/$RULE
+        return 4
+    end
+    _msg OK "$dst matches the expected rule"
+end
+
+function _write_rule --argument-names src dst
+    if test -f $dst; and test (_sha $dst) = (_sha $src)
+        _msg OK "$dst already current; not rewritten"
+        return 0
+    end
+    if test -e $dst
+        mkdir -p -m 0700 -- $STATE_DIR; or _die 1 "cannot create $STATE_DIR"
+        set -l bak $STATE_DIR/(date +%Y%m%dT%H%M%S)-$RULE.bak
+        cp -- $dst $bak; or _die 1 "backup failed: $bak"
+        _msg INFO "existing $RULE backed up to $bak; diff (installed -> new):"
+        _diff $dst $src
+    end
+    if not sudo install -m 0644 -- $src $dst.tmp; or not sudo mv -T -- $dst.tmp $dst
+        sudo rm -f -- $dst.tmp
+        _die 1 "write failed: $dst"
+    end
+    _msg OK "wrote $dst (0644)"
+end
+
+function _install
+    set -l lockdir /tmp
+    test -n "$XDG_RUNTIME_DIR"; and set lockdir $XDG_RUNTIME_DIR
+    mkdir -- $lockdir/keychron-udev.lock 2>/dev/null
+    or _die 1 "another run holds $lockdir/keychron-udev.lock (rmdir it if no other run is active)"
+    set -g _LOCK $lockdir/keychron-udev.lock
+    _inventory
+    sudo -v; or _die 3 'sudo authentication failed'
+    _rule_text > $_TMP/$RULE
+    set -l nodes (_hidraw_list | string split -f1 -- '|')
+    test (count $nodes) -gt 0; or _msg WARN 'no Keychron hidraw node to dry-run against; installing the static rule unverified'
+    for n in $nodes
+        _dry_run $n $_TMP; or _die 1 'candidate rule failed the udevadm dry-run; nothing written'
+    end
+    _write_rule $_TMP/$RULE $RULES_DIR/$RULE
+    sudo udevadm control --reload; or _die 1 'udevadm control --reload failed'
+    if test (count $nodes) -gt 0
+        sudo udevadm trigger --action=add --settle $nodes; or _die 1 'udevadm trigger failed'
+        _msg OK "re-added $nodes"
+    end
+    _verify
+    _msg INFO 'next: https://launcher.keychron.com/ in Chrome, board on the cable with the toggle on Cable, Connect, Firmware Update'
+end
+
+function _verify
+    set -l fail 0
+    set -l targets
+    for h in (_hidraw_list)
+        set -l f (string split -- '|' $h)
+        set -a targets "$f[1]|$f[3]"
+    end
+    for u in (_usb_list $DFU_VID $DFU_PID)
+        set -l f (string split -- '|' $u)
+        test -n "$f[4]"; and test -n "$f[5]"; or continue
+        set -a targets (printf '%s/bus/usb/%03d/%03d|STM32 DFU bootloader' $DEVFS $f[4] $f[5])
+    end
+    test (count $targets) -gt 0; or _msg WARN 'no Keychron hidraw node or STM32 DFU device present; nothing to verify'
+    for t in $targets
+        set -l f (string split -- '|' $t)
+        if test -r $f[1]; and test -w $f[1]
+            _msg OK "$f[1] rw for $USER ($f[2])"
+        else
+            _msg FAIL "$f[1] not accessible for $USER ($f[2])"
+            set fail 1
+        end
+    end
+    test $fail -eq 0; or _die 5 'access not live: replug the device, or run --install'
+    command -q getfacl; or return 0
+    for t in $targets
+        set -l node (string split -f1 -- '|' $t)
+        for l in (getfacl -p $node 2>/dev/null | string match -r -- '^user:[^:]+:.+')
+            _msg INFO "$node acl $l"
+        end
+    end
+end
+
+argparse -n keychron-udev -x check,install,verify h/help V/version c/check i/install v/verify -- $argv; or exit 2
+if set -q _flag_help
+    _usage
+    exit 0
+end
+if set -q _flag_version
+    echo "keychron-udev.fish $VERSION"
+    exit 0
+end
+test (count $argv) -eq 0; or _die 2 "unexpected argument: $argv[1]"
+set -l mode check
+set -q _flag_install; and set mode install
+set -q _flag_verify; and set mode verify
+_preflight $mode
+set -g _TMP (mktemp -d --tmpdir keychron-udev.XXXXXX); or _die 1 'mktemp failed'
+switch $mode
+    case install
+        _install
+    case verify
+        _verify
+    case '*'
+        _check
+end
+exit $status

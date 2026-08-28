@@ -2,7 +2,7 @@
 ------------------
 
   - preflight: refuse root (rc 2); require id, udevadm, USB sysfs and
-    /etc/udev/rules.d; --install also requires sudo and systemd-udev >= 258
+    /etc/udev/rules.d; --install also needs sudo and systemd-udev >= 258
   - check: list Keychron USB devices, a board in the STM32 DFU bootloader, and
     USB-bus hidraw nodes
   - check: compare 70-keychron.rules with the expected text by sha256; rc 4 on
@@ -14,7 +14,7 @@
   - install: back up a rule the invoking user cannot read with sudo install
     -m 0600 -o <uid> -g <gid>; abort before writing if it cannot be copied
   - install: udevadm trigger --action=add --settle on the live hidraw nodes so
-    the ACL lands without a replug; then run the verify checks
+    the ACL lands without a replug; then the verify checks
   - install: a failed write removes its .tmp; empty XDG vars fall back per
     spec; '|' in sysfs strings is sanitized before field parsing
   - verify: read-write check as the invoking user on every Keychron hidraw
@@ -25,8 +25,8 @@
     DFU), both TAG+="uaccess", file number 70 so 73-seat-late.rules applies it
   - rule: no MODE= on the hidraw line; the node stays 0600 root:root and the
     uaccess ACL is the only grant
-  - readers: sysfs and uevent reads are guarded, so a node that disappears or
-    is unreadable mid-scan is skipped rather than reported on stderr
+  - readers: sysfs and uevent reads are guarded; a node that disappears or is
+    unreadable mid-scan is skipped, not reported on stderr
   - signals: INT/TERM/HUP exit 130/143/129 after cleanup; mkdir lock under
     XDG_RUNTIME_DIR; temp dir removed on exit
   - logging: the run log opens after preflight; every line of a check, install

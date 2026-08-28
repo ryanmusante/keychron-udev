@@ -13,10 +13,7 @@ Launcher stops at "HID device connected" and a flash stalls at 0 %.
 
 `keychron-udev.fish` installs `/etc/udev/rules.d/70-keychron.rules`, tagging both
 device classes `uaccess` so systemd-logind grants the active seat user a dynamic
-ACL. No `input` or `plugdev` group, no `MODE="0666"`, no per-user `GROUP=`. It
-proves the candidate with `udevadm test -D` before writing anything, then writes
-atomically, reloads udev, re-adds the live nodes so the ACL lands without a
-replug, and verifies read-write access as the invoking user.
+ACL. No `input` or `plugdev` group, no `MODE="0666"`, no per-user `GROUP=`.
 
 ## Requirements
 
@@ -39,8 +36,8 @@ chmod 0755 keychron-udev.fish
 ```
 
 Put the board on the cable with its side toggle on Cable first, so the dry-run
-has a real hidraw node to prove the rule against. Then open
-`https://launcher.keychron.com/` in Chrome, Connect, and use Firmware Update.
+has a real hidraw node to prove against. Then open `https://launcher.keychron.com/`
+in Chrome, Connect, and use Firmware Update.
 
 > [!CAUTION]
 > Do not unplug the cable during a flash, and do not put a second Keychron board
@@ -108,7 +105,7 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="df11", TAG+="uacce
 > `input`.
 
 Line 1 covers every Keychron HID interface on the USB bus, including the
-2.4 GHz Link receiver (`3434:d030`), so the Launcher can configure a board over
+2.4 GHz Link receiver (`3434:d030`); the Launcher can configure a board over
 2.4 GHz once the receiver runs firmware d.3.0/c.3.0 or later. It sets no `MODE=`:
 the node stays `0600 root:root` and the ACL is the only grant. Line 2 matches the
 `0483:df11` pair systemd's hwdb names "STM Device in DFU Mode" and that Arch's
@@ -203,7 +200,7 @@ touches non-Keychron devices, never uses world-writable modes, and logind remove
 the ACL when the session stops being active.
 
 `_sha` and `_diff` call `command sha256sum` and `command diff`. fish autoloads
-`share/functions/diff.fish`, which wraps `diff` with `--color=auto`, and a user
+`share/functions/diff.fish`, which wraps `diff` with `--color=auto`; a user
 function of either name would otherwise sit between the operator and the decision
 to overwrite a system rule file.
 
@@ -216,9 +213,8 @@ write.
 Certified in a stub kit as an unprivileged user against a fake sysfs: a K2 HE on
 two hidraw nodes, a Link receiver, an STM32 DFU device, and a Bluetooth-bus
 Keychron node plus a Logitech node as negative controls. The kit's `sudo` is a
-setuid-root helper, not a pass-through, so the backup, staging and rename run
-with the privileges they have on the host. It repoints the four roots with a
-four-line patch:
+setuid-root helper, not a pass-through, so the privileged path runs for real. It
+repoints the four roots with a four-line patch:
 
 ```fish
 sed -e "s#^set -g SYSFS /sys\$#set -g SYSFS $KIT/sys#" \

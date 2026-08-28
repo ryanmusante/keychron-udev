@@ -1,5 +1,5 @@
 #!/usr/bin/env fish
-# keychron-udev.fish 1.0.0 (2026-08-26): udev access for Keychron Launcher (WebHID) and STM32 DFU flashing (WebUSB)
+# keychron-udev.fish 1.0.0 (2026-08-26): udev access for Keychron Launcher (WebHID) and DFU (WebUSB)
 # Exit codes: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift (--check) / 5 verify failed
 
 # ── SETTINGS ──
@@ -19,13 +19,12 @@ set -g _LOCK ''
 set -g _LOG ''
 set -g _SIG 0
 set -g NODEV 'no Keychron USB device: put the toggle on Cable, or plug the receiver in'
-set -g INDFU 'board is in bootloader mode; it re-enumerates as a Keychron device after a flash'
+set -g INDFU 'board is in bootloader mode; it re-enumerates after a flash'
 set -g NONODE 'no hidraw node to dry-run against; installing the rule unverified'
 
 # ── OUTPUT AND LIFECYCLE ──
 # a handler cannot exit with a code, so it records the number and the next message exits 128+N
-function _msg -d 'Print a leveled line to stderr and the run log; exit 128+N after a signal' \
-    --argument-names lvl
+function _msg -d 'Print a leveled line to stderr and the run log' --argument-names lvl
     test $_SIG -eq 0; or exit (math 128 + $_SIG)
     set -l c ''
     set -l r ''
@@ -45,7 +44,7 @@ function _die -d 'Print a FAIL line and exit with the given code' --argument-nam
     exit $code
 end
 
-function _log_open -d 'Open the append-only run log under the state dir' --argument-names mode
+function _log_open -d 'Open the run log under the state dir' --argument-names mode
     mkdir -p -m 0700 -- $STATE_DIR; or return 0
     set -g _LOG $STATE_DIR/keychron-udev.log
     touch -- $_LOG; and chmod 0600 -- $_LOG; or set -g _LOG ''
@@ -53,7 +52,7 @@ function _log_open -d 'Open the append-only run log under the state dir' --argum
     return 0
 end
 
-function _cleanup -d 'Remove the temp dir and the lock dir on exit' --on-event fish_exit
+function _cleanup -d 'Remove the temp dir and lock on exit' --on-event fish_exit
     test -n "$_TMP"; and rm -rf --preserve-root -- $_TMP
     test -n "$_LOCK"; and rmdir -- $_LOCK 2>/dev/null
 end
@@ -87,8 +86,7 @@ function _attr -d 'Print a sysfs attribute, or nothing when it is unreadable' --
     test -r $f; and string trim -- (cat -- $f 2>/dev/null)
 end
 
-function _usb_list -d 'List one vendor as vid:pid|product|manufacturer|busnum|devnum' \
-    --argument-names vid pid
+function _usb_list -d 'List one vendor as vid:pid|product|mfr|bus|dev' --argument-names vid pid
     for f in $SYSFS/bus/usb/devices/*/idVendor
         set -l d (dirname -- $f)
         set -l v (_attr $f)
@@ -117,7 +115,6 @@ function _hidraw_list -d 'List USB-bus Keychron hidraw nodes as /dev/hidrawN|pid
 end
 
 # ── RULE AND FILE HELPERS ──
-# _sha and _diff use `command`: fish ships functions/diff.fish, and a user hook must not sit in that path
 function _rule_text -d 'Print the expected udev rule file'
     printf '%s\n' \
         "# $RULE: written by keychron-udev.fish. Keep the number below 73:" \
@@ -128,6 +125,7 @@ function _rule_text -d 'Print the expected udev rule file'
         "SUBSYSTEM==\"usb\", ATTRS{idVendor}==\"$DFU_VID\", ATTRS{idProduct}==\"$DFU_PID\", TAG+=\"uaccess\""
 end
 
+# `command` on both: fish ships functions/diff.fish, and a user hook must not sit in this path
 function _sha -d 'Print the sha256 of a file, or nothing when it cannot be read' --argument-names f
     command sha256sum -- $f 2>/dev/null | string sub -l 64
 end
@@ -137,21 +135,19 @@ function _diff -d 'Print a unified diff to stderr when diffutils is installed' -
     return 0
 end
 
-function _backup -d 'Copy the installed rule aside, with sudo when the user cannot read it' \
-    --argument-names dst bak
+function _backup -d 'Copy the installed rule aside, with sudo when unreadable' --argument-names dst bak
     cp -- $dst $bak 2>/dev/null; and return 0
     sudo install -m 0600 -o (id -u) -g (id -g) -- $dst $bak
 end
 
-function _write_rule -d 'Keep an identical file, back up a differing one, install atomically' \
-    --argument-names src dst
+function _write_rule -d 'Keep an identical file, back up a differing one' --argument-names src dst
     # a run killed between install and mv leaves a root-owned .tmp; udev ignores it
     test -e $dst.tmp; and sudo rm -f -- $dst.tmp; and _msg INFO "removed a stale $dst.tmp"
     set -l want (_sha $src)
     set -l have ''
     test -f $dst; and set have (_sha $dst)
     if test -n "$have"; and test "$have" = "$want"
-        _msg OK "$dst already current; not rewritten"
+        _msg OK "$dst already current"
         return 0
     end
     if test -e $dst
@@ -169,13 +165,13 @@ function _write_rule -d 'Keep an identical file, back up a differing one, instal
 end
 
 # ── PREFLIGHT AND DRY-RUN ──
-function _preflight -d 'Refuse root and missing dependencies; require udev >= 258 for install' --argument-names mode
+function _preflight -d 'Refuse root and missing dependencies; gate udev >= 258' --argument-names mode
     command -q id; or _die 3 'id not found'
-    test (id -u) -ne 0; or _die 2 'run as your desktop user, not root; sudo is invoked where needed'
+    test (id -u) -ne 0; or _die 2 'run as your desktop user, not root'
     command -q udevadm; or _die 3 'udevadm not found'
     test -d $SYSFS/bus/usb/devices; or _die 3 "no USB sysfs under $SYSFS"
     test -d $RULES_DIR; or _die 3 "missing $RULES_DIR"
-    test -e $SEAT_LATE; or _msg WARN "$SEAT_LATE missing: nothing would apply the uaccess ACL on this system"
+    test -e $SEAT_LATE; or _msg WARN "$SEAT_LATE missing: nothing would apply the uaccess ACL"
     test "$mode" = install; or return 0
     command -q sudo; or _die 3 'sudo not found'
     set -l ver (udevadm --version | string match -r -- '^[0-9]+')
@@ -183,8 +179,7 @@ function _preflight -d 'Refuse root and missing dependencies; require udev >= 25
 end
 
 # the queued builtin is the proof that the candidate file sorts before 73-seat-late.rules
-function _dry_run -d 'Prove a rules dir tags uaccess and queues the builtin for one node' \
-    --argument-names node extra
+function _dry_run -d 'Prove a rules dir tags uaccess and queues the builtin' --argument-names node extra
     set -l opts --json=short
     test -n "$extra"; and set -a opts -D $extra
     set -l json (sudo udevadm test $opts $node 2>/dev/null | string collect)
@@ -200,7 +195,7 @@ function _dry_run -d 'Prove a rules dir tags uaccess and queues the builtin for 
 end
 
 # ── MODES ──
-function _inventory -d 'Print the Keychron USB devices, DFU devices and hidraw nodes that are present'
+function _inventory -d 'Print the Keychron, DFU and hidraw devices present'
     set -l usb (_usb_list $KC_VID)
     set -l dfu (_usb_list $DFU_VID $DFU_PID)
     test (count $usb) -gt 0; or test (count $dfu) -gt 0; or _msg WARN $NODEV
@@ -232,7 +227,7 @@ function _check -d 'Compare the installed rule with the expected text; return 4 
     set -l want (_sha $_TMP/$RULE)
     # an unquoted empty substitution collapses the operand list and `test` falls through
     if test (string length -- "$have") -ne 64
-        _msg WARN "$dst exists but is not a readable regular file; treated as drift"
+        _msg WARN "$dst is not a readable regular file"
         return 4
     end
     if test "$have" != "$want"
@@ -267,7 +262,7 @@ function _install -d 'Dry-run the candidate, write it, reload udev, re-add the l
     _msg INFO 'next: https://launcher.keychron.com/ in Chrome, Connect, Firmware Update'
 end
 
-function _verify -d 'Check read-write access for the current user on every Keychron node; exit 5 on failure'
+function _verify -d 'Check read-write access on every Keychron node; exit 5 on failure'
     set -l fail 0
     set -l targets
     for h in (_hidraw_list)
@@ -281,7 +276,7 @@ function _verify -d 'Check read-write access for the current user on every Keych
         set -a targets (printf '%s/bus/usb/%s/%s|STM32 DFU bootloader' $DEVFS \
             (string pad -c 0 -w 3 -- $f[4]) (string pad -c 0 -w 3 -- $f[5]))
     end
-    test (count $targets) -gt 0; or _msg WARN 'no Keychron hidraw node or STM32 DFU device present; nothing to verify'
+    test (count $targets) -gt 0; or _msg WARN 'no Keychron hidraw node or STM32 DFU device present'
     for t in $targets
         set -l f (string split -- '|' $t)
         if test -r $f[1]; and test -w $f[1]

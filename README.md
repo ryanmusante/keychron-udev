@@ -22,7 +22,7 @@ ACL. No `input` or `plugdev` group, no `MODE="0666"`, no per-user `GROUP=`.
 | OS         | Arch-based distro, systemd-udev >= 258     | `udevadm test -D` added in 258; developed against 261 |
 | Shell      | fish >= 3.6                                | newest features used: `string match -g` (3.4), `string split -f` and `string pad` (3.2) |
 | Privileges | sudo for `--install` only                  | `--check` and `--verify` never elevate |
-| Tools      | coreutils                                  | `id`, `install`, `mv -T`, `cp`, `rm`, `mkdir`, `mktemp`, `sha256sum`, `date`, `touch`, `chmod` |
+| Tools      | coreutils                                  | `id`, `install`, `mv -T`, `rm`, `rmdir`, `mkdir`, `mktemp`, `sha256sum`, `cat`, `dirname`, `date`, `touch`, `chmod` |
 | Optional   | diffutils, acl                             | diff display; `getfacl` ACL display |
 | Browser    | native Chrome, Chromium or Edge            | Snap and Flatpak sandboxes need device access granted separately |
 | Keyboard   | any Launcher board or receiver, VID `3434` | QMK-based HE and Max boards flash through the STM32 DFU bootloader; ZMK-based Ultra boards unverified |
@@ -57,7 +57,8 @@ in Chrome, Connect, and use Firmware Update.
 Diagnostics go to stderr; stdout carries only `--help` and `--version`. The run
 log opens after preflight: every line of a `--check`, `--install` or `--verify`
 run is mirrored to it with a timestamp, and the path is printed last. `--help`,
-`--version`, usage errors and preflight failures exit before the log exists.
+`--version`, usage errors and preflight failures exit before the log exists; a
+failed `sudo -v` (also rc 3) comes after it opens.
 Color requires a terminal and is disabled by a non-empty `NO_COLOR` or
 `TERM=dumb`.
 
@@ -68,7 +69,7 @@ Color requires a terminal and is disabled by a non-empty `NO_COLOR` or
 | `/etc/udev/rules.d/70-keychron.rules` | the installed rule | 0644 root |
 | `/etc/udev/rules.d/70-keychron.rules.tmp` | write staging; inert to udev, which reads only `*.rules`; removed on failure, cleared on the next `--install` | 0644 root |
 | `$XDG_STATE_HOME/keychron-udev/keychron-udev.log` | append-only run log | 0600 |
-| `$XDG_STATE_HOME/keychron-udev/<timestamp>-70-keychron.rules.bak` | backup of a replaced rule | 0644 |
+| `$XDG_STATE_HOME/keychron-udev/<timestamp>-70-keychron.rules.bak` | backup of a replaced rule | 0644 (0600 via sudo) |
 | `$XDG_RUNTIME_DIR/keychron-udev.lock` | lock held during `--install` | dir |
 
 `XDG_STATE_HOME` defaults to `~/.local/state`; `XDG_RUNTIME_DIR` falls back to
@@ -119,12 +120,12 @@ Bluetooth-attached boards expose no `idVendor` attribute and are never matched.
    and `73-seat-late.rules`; requires systemd-udev 258 or later.
 2. Takes a lock directory under `XDG_RUNTIME_DIR`, authenticates with `sudo -v`.
 3. Writes the candidate to a private temp directory and runs
-   `sudo udevadm test --json=short -D <tmp> /dev/hidrawN` per node. The JSON must
-   list `uaccess` under `tags` and a queued `uaccess` builtin under
-   `queuedCommands` — the second is the proof the file sorts before
-   `73-seat-late.rules`. Any failure aborts before a write.
+   `sudo udevadm test --json=short -D <tmp> <node>` per live hidraw node and
+   STM32 DFU device. The JSON must list `uaccess` under `tags` and a queued
+   `uaccess` builtin under `queuedCommands` — the second is the proof the file
+   sorts before `73-seat-late.rules`. Any failure aborts before a write.
 4. Removes a stale `70-keychron.rules.tmp`.
-5. Leaves an identical rule untouched. Copies a differing one to
+5. Leaves an identical rule untouched. Copies a differing one (0644) to
    `$XDG_STATE_HOME/keychron-udev/<timestamp>-70-keychron.rules.bak` and diffs
    that copy against the new text. A rule the invoking user cannot read is copied
    with `sudo install -m 0600 -o <uid> -g <gid>`; anything that cannot be copied
@@ -132,7 +133,9 @@ Bluetooth-attached boards expose no `idVendor` attribute and are never matched.
 6. Installs to `70-keychron.rules.tmp` (0644) and renames with `mv -T`, so udev
    never reads a partial file; a failed write removes the temporary file.
 7. Runs `sudo udevadm control --reload`, then
-   `sudo udevadm trigger --action=add --settle` on the live hidraw nodes.
+   `sudo udevadm trigger --action=add --settle` on the live hidraw nodes and
+   DFU devices, so a board already sitting in the bootloader gets its ACL
+   without a replug.
 8. Runs the `--verify` checks, printing each node's `user:` ACL entry when
    `getfacl` is installed.
 
@@ -236,6 +239,10 @@ Covered:
   argparse errors; the udev 257/258 boundary
 - verify denial; a leading-zero `busnum`/`devnum`; `|` in sysfs strings; empty
   `XDG_*` variables
+- `--install` with a board sitting in the bootloader: the DFU node is dry-run,
+  triggered and verified
+- a passing `--verify` with `getfacl` installed and a node without a named
+  `user:` entry (exit stays 0); a backup written under `umask 077` (still 0644)
 - lock contention; SIGPIPE on `--help`; SIGINT/SIGTERM/SIGHUP during `sudo -v`
   (130/143/129, nothing written, lock and temp removed)
 - the color gate on a pty across `NO_COLOR` unset, empty and non-empty
@@ -243,11 +250,12 @@ Covered:
 - the run-log mirror (0600, one header line per run)
 
 Privileged calls recorded by the stubs: `sudo -v`, one
-`udevadm test --json=short -D` per node, `install -m 0644` to `.tmp`, `mv -T`,
-`udevadm control --reload`, `udevadm trigger --action=add --settle`. Two more
-appear only when their condition is met: `rm -f` on a stale `.tmp`, and
-`install -m 0600 -o <uid> -g <gid>` for an unreadable backup. Nothing else runs
-through `sudo`.
+`udevadm test --json=short -D` per live hidraw node and DFU device,
+`install -m 0644` to `.tmp`, `mv -T`, `udevadm control --reload`,
+`udevadm trigger --action=add --settle`. Three more appear only when their
+condition is met: `rm -f` on a stale `.tmp`, `rm -f` on the `.tmp` of a failed
+write, and `install -m 0600 -o <uid> -g <gid>` for an unreadable backup.
+Nothing else runs through `sudo`.
 
 ## Sources
 

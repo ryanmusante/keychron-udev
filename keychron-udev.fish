@@ -1,6 +1,6 @@
 #!/usr/bin/env fish
 # keychron-udev.fish 1.0.0 (2026-08-26): udev access for Keychron Launcher (WebHID) and DFU (WebUSB)
-# Exit codes: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift (--check) / 5 verify failed
+# Exit codes: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift (--check) / 5 verify failed / 128+N signals
 
 # ── SETTINGS ──
 set -g VERSION 1.0.0
@@ -20,7 +20,7 @@ set -g _LOG ''
 set -g _SIG 0
 set -g NODEV 'no Keychron USB device: put the toggle on Cable, or plug the receiver in'
 set -g INDFU 'board is in bootloader mode; it re-enumerates after a flash'
-set -g NONODE 'no hidraw node to dry-run against; installing the rule unverified'
+set -g NONODE 'no Keychron hidraw or DFU node to dry-run against; installing the rule unverified'
 
 # ── OUTPUT AND LIFECYCLE ──
 # a handler cannot exit with a code, so it records the number and the next message exits 128+N
@@ -76,7 +76,7 @@ function _usage -d 'Print the usage text to stdout'
         '             write atomically, reload udev, re-add the live nodes, verify' \
         '  --verify   confirm the current user has rw on every Keychron hidraw node' \
         '             and on an STM32 DFU device when present' \
-        'Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift (--check) / 5 verify failed' \
+        'Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift / 5 verify failed / 128+N signals' \
         'Env:  NO_COLOR (non-empty) or TERM=dumb disable color; XDG_STATE_HOME holds the log and backups'
 end
 
@@ -114,6 +114,15 @@ function _hidraw_list -d 'List USB-bus Keychron hidraw nodes as /dev/hidrawN|pid
     end
 end
 
+function _dfu_nodes -d 'Print the /dev/bus/usb node of every STM32 DFU device'
+    for u in (_usb_list $DFU_VID $DFU_PID)
+        set -l f (string split -- '|' $u)
+        test -n "$f[4]"; and test -n "$f[5]"; or continue
+        # not %03d: fish printf reads a leading-zero field as octal (012 -> 010, silently)
+        printf '%s/bus/usb/%s/%s\n' $DEVFS (string pad -c 0 -w 3 -- $f[4]) (string pad -c 0 -w 3 -- $f[5])
+    end
+end
+
 # ── RULE AND FILE HELPERS ──
 function _rule_text -d 'Print the expected udev rule file'
     printf '%s\n' \
@@ -136,7 +145,7 @@ function _diff -d 'Print a unified diff to stderr when diffutils is installed' -
 end
 
 function _backup -d 'Copy the installed rule aside, with sudo when unreadable' --argument-names dst bak
-    cp -- $dst $bak 2>/dev/null; and return 0
+    install -m 0644 -- $dst $bak 2>/dev/null; and return 0
     sudo install -m 0600 -o (id -u) -g (id -g) -- $dst $bak
 end
 
@@ -247,7 +256,7 @@ function _install -d 'Dry-run the candidate, write it, reload udev, re-add the l
     _inventory
     sudo -v; or _die 3 'sudo authentication failed'
     _rule_text >$_TMP/$RULE
-    set -l nodes (_hidraw_list | string split -f1 -- '|')
+    set -l nodes (_hidraw_list | string split -f1 -- '|') (_dfu_nodes)
     test (count $nodes) -gt 0; or _msg WARN $NONODE
     for n in $nodes
         _dry_run $n $_TMP; or _die 1 'candidate rule failed the udevadm dry-run; nothing written'
@@ -269,12 +278,8 @@ function _verify -d 'Check read-write access on every Keychron node; exit 5 on f
         set -l f (string split -- '|' $h)
         set -a targets "$f[1]|$f[3]"
     end
-    for u in (_usb_list $DFU_VID $DFU_PID)
-        set -l f (string split -- '|' $u)
-        test -n "$f[4]"; and test -n "$f[5]"; or continue
-        # not %03d: fish printf reads a leading-zero field as octal (012 -> 010, silently)
-        set -a targets (printf '%s/bus/usb/%s/%s|STM32 DFU bootloader' $DEVFS \
-            (string pad -c 0 -w 3 -- $f[4]) (string pad -c 0 -w 3 -- $f[5]))
+    for n in (_dfu_nodes)
+        set -a targets "$n|STM32 DFU bootloader"
     end
     test (count $targets) -gt 0; or _msg WARN 'no Keychron hidraw node or STM32 DFU device present'
     for t in $targets
@@ -294,6 +299,8 @@ function _verify -d 'Check read-write access on every Keychron node; exit 5 on f
             _msg INFO "$node acl $l"
         end
     end
+    # the ACL display is informational: an entry-less node must not become exit 1
+    return 0
 end
 
 # ── MAIN ──

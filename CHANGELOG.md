@@ -3,8 +3,8 @@
 
   - preflight: refuse root (rc 2); require id, udevadm, USB sysfs and
     /etc/udev/rules.d; --install also requires sudo and systemd-udev >= 258
-  - check: list Keychron USB devices, a board sitting in the STM32 DFU
-    bootloader, and USB-bus hidraw nodes
+  - check: list Keychron USB devices, a board in the STM32 DFU bootloader, and
+    USB-bus hidraw nodes
   - check: compare 70-keychron.rules with the expected text by sha256; rc 4 on
     drift, on a missing file, and on one that cannot be hashed
   - install: udevadm test --json=short -D dry-run on every live node; require
@@ -19,8 +19,8 @@
     spec; '|' in sysfs strings is sanitized before field parsing
   - verify: read-write check as the invoking user on every Keychron hidraw
     node and on an STM32 DFU device node when present; rc 5 on failure
-  - verify: DFU node paths are built with string pad, so a leading-zero busnum
-    or devnum is not read as an octal number
+  - verify: DFU node paths built with string pad, not printf %03d, which reads
+    a leading-zero busnum or devnum as octal
   - rule: hidraw VID 3434 (boards and Link receiver) plus usb 0483:df11 (STM32
     DFU), both TAG+="uaccess", file number 70 so 73-seat-late.rules applies it
   - rule: no MODE= on the hidraw line; the node stays 0600 root:root and the
@@ -33,5 +33,5 @@
     or verify run is mirrored to it (0600); path shown at exit
   - output: diagnostics on stderr, stdout only for --help and --version; color
     only on a tty, disabled by non-empty NO_COLOR or TERM=dumb
-  - output: sha256 and diff run through `command`, so neither fish's own diff
-    function nor a user function can alter a comparison or a displayed diff
+  - output: sha256 and diff run through `command`, past fish's own diff
+    function and any user function of either name

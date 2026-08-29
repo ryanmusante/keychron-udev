@@ -13,22 +13,20 @@ Launcher stops at "HID device connected" and a flash stalls at 0 %.
 
 `keychron-udev.fish` installs `/etc/udev/rules.d/70-keychron.rules`, tagging both
 device classes `uaccess` so systemd-logind grants the active seat user a dynamic
-ACL. No `input` or `plugdev` group, no `MODE="0666"`, no per-user `GROUP=`.
-
-Both vendor IDs Keychron ships under are covered: `3434` for Keychron-branded
-boards and `362d` for Lemokey, its gaming sub-brand.
+ACL. No `input` or `plugdev` group, no `MODE="0666"`, no per-user `GROUP=`. Both
+vendor IDs are covered: `3434` for Keychron boards, `362d` for Lemokey.
 
 ## Requirements
 
-| Component  | Requirement                                | Notes |
-|------------|--------------------------------------------|-------|
-| OS         | Arch-based distro, systemd-udev >= 258     | `udevadm test -D` added in 258; developed against 261.2 |
-| Shell      | fish >= 3.6                                | newest features used: `string match -g` (3.4), `string split -f` and `string pad` (3.2) |
-| Privileges | sudo for `--install` and `--uninstall`     | `--check` and `--verify` never elevate |
-| Tools      | coreutils                                  | `id`, `install`, `mv -T`, `rm`, `rmdir`, `mkdir`, `mktemp`, `sha256sum`, `cat`, `dirname`, `date`, `touch`, `chmod` |
-| Optional   | diffutils, acl                             | diff display; `getfacl` ACL display |
-| Browser    | native Chrome, Chromium or Edge            | Snap and Flatpak sandboxes need device access granted separately |
-| Keyboard   | any Launcher board or receiver             | Keychron VID `3434`, Lemokey VID `362d` |
+| Component  | Requirement                            | Notes |
+|------------|----------------------------------------|-------|
+| OS         | Arch-based distro, systemd-udev >= 258 | `udevadm test -D` added in 258; developed against 261.2 |
+| Shell      | fish >= 3.6                            | newest features used: `string match -g` (3.4), `string split -f` and `string pad` (3.2) |
+| Privileges | sudo for `--install` and `--uninstall` | `--check` and `--verify` never elevate |
+| Tools      | coreutils                              | `id`, `install`, `mv -T`, `rm`, `rmdir`, `mkdir`, `mktemp`, `sha256sum`, `cat`, `dirname`, `date`, `touch`, `chmod` |
+| Optional   | diffutils                              | diff display before overwriting a rule |
+| Browser    | native Chrome, Chromium or Edge        | Snap and Flatpak sandboxes need device access granted separately |
+| Keyboard   | any Launcher board or receiver         | Keychron VID `3434`, Lemokey VID `362d` |
 
 ## Quick Start
 
@@ -51,7 +49,7 @@ in Chrome, Connect, and use Firmware Update.
 
 | Flag | Action | Elevates |
 |------|--------|----------|
-| `-c`, `--check`     | default; list matched devices, a board in DFU mode and USB-bus hidraw nodes, compare the installed rule | no |
+| `-c`, `--check`     | default; list matched devices and USB-bus hidraw nodes, compare the installed rule | no |
 | `-i`, `--install`   | dry-run, back up and diff an existing file, write, reload, re-add live nodes, verify | sudo |
 | `-v`, `--verify`    | confirm read-write access on every matched hidraw node and DFU device | no |
 | `-u`, `--uninstall` | back up and remove the rule, then reload udev | sudo |
@@ -59,12 +57,10 @@ in Chrome, Connect, and use Firmware Update.
 | `-V`, `--version`   | version | no |
 
 Diagnostics go to stderr; stdout carries only `--help` and `--version`. The run
-log opens after preflight: every line of a run is mirrored to it with a
-timestamp, and the path is printed last. `--help`, `--version`, usage errors and
-preflight failures exit before the log exists; a failed `sudo -v` (also rc 3)
-comes after it opens.
-Color requires a terminal and is disabled by a non-empty `NO_COLOR` or
-`TERM=dumb`.
+log opens after preflight, mirrors every line with a timestamp, and its path is
+printed last. `--help`, `--version`, usage errors and preflight failures exit
+before the log exists; a failed `sudo -v` (also rc 3) comes after it opens.
+Color needs a terminal and is disabled by a non-empty `NO_COLOR` or `TERM=dumb`.
 
 ## Files
 
@@ -111,20 +107,19 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="342d", ATTRS{idProduct}=="dfa0", TAG+="uacce
 > 99-numbered guides work only because they also set `GROUP=` or add the user to
 > `input`.
 
-The two hidraw lines cover every HID interface on the USB bus belonging to
-either vendor, including a 2.4 GHz receiver that enumerates under one of them.
-They set no `MODE=`: the node stays `0600 root:root` and the ACL is the only
-grant. The two usb lines cover the bootloaders a Launcher board re-enumerates
-as. `0483:df11` is the pair systemd's hwdb names "STM Device in DFU Mode";
-`342d:dfa0` is the WB32 DFU pair from QMK's canonical rules. Neither carries an
-`ACTION==` qualifier, so a synthetic re-add or change event applies it too.
-Bluetooth-attached boards expose no `idVendor` attribute and are never matched.
+The hidraw lines cover every HID interface on the USB bus belonging to either
+vendor, including a 2.4 GHz receiver that enumerates under one of them. They set
+no `MODE=`: the node stays `0600 root:root` and the ACL is the only grant. The
+usb lines cover the two bootloaders a Launcher board re-enumerates as. Neither
+line carries an `ACTION==` qualifier, so a synthetic re-add or change event
+applies it too. Bluetooth-attached boards expose no `idVendor` attribute and are
+never matched.
 
-Every one of the 71 Keychron board configurations in Keychron's own QMK tree
-declares `stm32-dfu` on vid `0x3434`, the K2 HE among them. The three Lemokey
-configurations declare vid `0x362D`, and the Lemokey P1 Pro declares
-`wb32-dfu` on a WB32F3G71. ZMK-based Ultra boards are not in that tree, so
-their bootloader path is not covered here.
+All 71 Keychron board configurations in Keychron's own QMK tree declare
+`stm32-dfu` on vid `0x3434`, the K2 HE among them. The three Lemokey
+configurations declare vid `0x362D`, and the Lemokey P1 Pro declares `wb32-dfu`
+on a WB32F3G71. ZMK-based Ultra boards are not in that tree, so their bootloader
+path is not covered here.
 
 ## What `--install` Does
 
@@ -134,22 +129,19 @@ their bootloader path is not covered here.
 3. Writes the candidate to a private temp directory and runs
    `sudo udevadm test --json=short -D <tmp> <node>` per live hidraw node and DFU
    device. The JSON must list `uaccess` under `tags` and a queued `uaccess`
-   builtin under `queuedCommands` — the second is the proof the file sorts
-   before `73-seat-late.rules`. Any failure aborts before a write.
-4. Removes a stale `70-keychron.rules.tmp`.
-5. Leaves an identical rule untouched. Copies a differing one (0644) to
-   `$XDG_STATE_HOME/keychron-udev/<timestamp>-70-keychron.rules.bak` and diffs
-   that copy against the new text. A rule the invoking user cannot read is copied
-   with `sudo install -m 0600 -o <uid> -g <gid>`; anything that cannot be copied
-   at all aborts before a write.
+   builtin under `queuedCommands` — the second is the proof the file sorts before
+   `73-seat-late.rules`. Any failure aborts before a write.
+4. Removes a stale `70-keychron.rules.tmp`; leaves an identical rule untouched.
+5. Copies a differing rule to the state directory and diffs it against the new
+   text. A rule the invoking user cannot read is copied with
+   `sudo install -m 0600 -o <uid> -g <gid>`; a rule that cannot be copied at all
+   aborts before a write.
 6. Installs to `70-keychron.rules.tmp` (0644) and renames with `mv -T`, so udev
    never reads a partial file; a failed write removes the temporary file.
 7. Runs `sudo udevadm control --reload`, then
-   `sudo udevadm trigger --action=add --settle` on the live hidraw nodes and
-   DFU devices, so a board already sitting in the bootloader gets its ACL
-   without a replug.
-8. Runs the `--verify` checks, printing each node's `user:` ACL entry when
-   `getfacl` is installed.
+   `sudo udevadm trigger --action=add --settle` on the live nodes, so a board
+   already sitting in the bootloader gets its ACL without a replug.
+8. Runs the `--verify` checks.
 
 ## Verification
 
@@ -159,8 +151,6 @@ fish_indent --check keychron-udev.fish      # 0-diff on the shipped file
 ./keychron-udev.fish --check
 ./keychron-udev.fish --verify
 sudo udevadm test --json=pretty /dev/hidrawN 2>/dev/null | jq '.tags, .queuedCommands'
-getfacl -p /dev/hidrawN
-command sha256sum keychron-udev.fish
 ```
 
 `jq` is optional. In Chrome, `chrome://device-log` lists every HID and USB access
@@ -168,13 +158,9 @@ attempt with its error.
 
 ## Uninstall
 
-```fish
-./keychron-udev.fish --uninstall
-```
-
-The rule is copied to the state directory before it is removed, and udev is
-reloaded. Existing nodes keep their ACL until re-added: replug the board or
-reboot. Removing the file by hand works too:
+`./keychron-udev.fish --uninstall` copies the rule to the state directory,
+removes it, and reloads udev. Existing nodes keep their ACL until re-added:
+replug the board or reboot. By hand:
 
 ```fish
 sudo rm /etc/udev/rules.d/70-keychron.rules
@@ -215,29 +201,24 @@ a Windows updater. Board firmware and Launcher configuration are unaffected.
 ## Security Notes
 
 The hidraw lines grant the seat user read-write access to every HID interface of
-both vendors, not only the raw-HID interface the Launcher uses. On a single-user
-desktop that is the accepted trade-off; scoping to the raw interface would need a
-report descriptor check like the `qmk_id` helper in the `qmk_udev` project. Each
-DFU pair also matches a bare development board carrying the same MCU. The rule
-never touches other vendors, never uses world-writable modes, and logind removes
-the ACL when the session stops being active.
+both vendors, not only the raw-HID interface the Launcher uses; each DFU pair
+also matches a bare development board carrying the same MCU. On a single-user
+desktop that is the accepted trade-off. The rule never touches other vendors,
+never uses world-writable modes, and logind removes the ACL when the session
+stops being active.
 
-`_sha` and `_diff` call `command sha256sum` and `command diff`. fish autoloads
-`share/functions/diff.fish`, which wraps `diff` with `--color=auto`; a user
-function of either name would otherwise sit between the operator and the decision
-to overwrite a system rule file.
-
-`SYSFS`, `DEVFS`, `RULES_DIR` and `SEAT_LATE` are fixed `set -g` lines with no
-environment override, so nothing in the environment can redirect a privileged
+`_sha` and `_diff` call `command sha256sum` and `command diff`, so no user
+function can sit between the operator and the decision to overwrite a system rule
+file. `SYSFS`, `DEVFS`, `RULES_DIR` and `SEAT_LATE` are fixed `set -g` lines with
+no environment override, so nothing in the environment can redirect a privileged
 write.
 
 ## Testing
 
-Certified in a stub kit as an unprivileged user against a fake sysfs holding six
-USB devices and six hidraw nodes: a Keychron board on two hidraw nodes, a second
-Keychron device, a Lemokey board, an ST ROM DFU device with leading-zero
-`busnum`/`devnum`, a WB32 DFU device, and a Bluetooth-bus node plus a Logitech
-node as negative controls. It repoints the four roots with a four-line patch:
+Certified as an unprivileged user against a stub kit: a fake sysfs with six USB
+devices and six hidraw nodes, covering both vendors, both DFU pairs, a
+leading-zero `busnum`/`devnum`, and Bluetooth-bus and other-vendor negative
+controls. The four roots are repointed with a four-line `sed`:
 
 ```fish
 sed -e "s#^set -g SYSFS /sys\$#set -g SYSFS $KIT/sys#" \
@@ -247,42 +228,23 @@ sed -e "s#^set -g SYSFS /sys\$#set -g SYSFS $KIT/sys#" \
     keychron-udev.fish > $KIT/keychron-udev.fish
 ```
 
-Covered:
-
-- device listing; `--check` before, after and against a tampered rule
-- both vendor IDs and both DFU pairs listed, dry-run, triggered and verified
-- the Bluetooth-bus and other-vendor nodes absent from every listing
-- reinstall on an unchanged rule; a stale `.tmp` cleared on the next run
-- `--uninstall` with the rule present, and again when it is already absent
-- preflight gates: root refusal, argparse errors including two mode flags at
-  once, the udev 257/258 boundary for `--install`, and `--uninstall` passing on
-  257 because it never runs `udevadm test -D`
-- verify denial on an inaccessible node (rc 5); a leading-zero `busnum`/`devnum`
-- lock contention; the color gate on a pty across `NO_COLOR` unset, empty and
-  non-empty
-- stdout empty in every mode except `--help` and `--version`; state dir 0700,
-  log 0600, installed rule 0644; no temp directory or lock left behind
-
-A candidate file numbered 99 instead of 70 was confirmed to produce the tag
-without the queued builtin, which is the failure the file number prevents.
+21 cases cover every exit code, both privileged modes, reinstall on an unchanged
+rule, a stale `.tmp`, lock contention, the udev 257/258 boundary, and the color
+gate across `NO_COLOR` unset, empty and non-empty. A candidate numbered 99
+instead of 70 was confirmed to produce the tag without the queued builtin, which
+is the failure the file number prevents.
 
 ## Sources
 
 - systemd `rules.d/73-seat-late.rules.in`: `TAG=="uaccess|xaccess-*", ENV{MAJOR}!="", RUN{builtin}+="uaccess"`
   ([github](https://github.com/systemd/systemd/blob/main/rules.d/73-seat-late.rules.in)).
-- systemd `rules.d/70-uaccess.rules.in`: upstream precedent for `uaccess` on `hidraw`
-  ([github](https://github.com/systemd/systemd/blob/main/rules.d/70-uaccess.rules.in)).
 - systemd `rules.d/50-udev-default.rules.in`: `SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", MODE="0664"`
   ([github](https://github.com/systemd/systemd/blob/main/rules.d/50-udev-default.rules.in)).
 - systemd `src/udev/udev-dump.c`: JSON keys `tags`, `currentTags`, `queuedCommands`
   ([github](https://github.com/systemd/systemd/blob/main/src/udev/udev-dump.c)).
-- systemd `src/basic/build.c`, `version_only()`: `udevadm --version` prints a bare integer
-  ([github](https://github.com/systemd/systemd/blob/main/src/basic/build.c)).
 - udevadm(8), systemd 261.2: `test` accepts `/dev/` paths, `--json=`, `-D` (added in 258),
   `control --reload`, `trigger --action= --settle` ([man.archlinux.org](https://man.archlinux.org/man/udevadm.8)).
 - udev(7): `ATTRS{}` searches the devpath upwards ([man.archlinux.org](https://man.archlinux.org/man/udev.7)).
-- Arch Wiki, Udev, "Allowing regular users to use devices": file must lexically precede
-  `73-seat-late.rules` ([wiki.archlinux.org](https://wiki.archlinux.org/title/Udev)).
 - systemd hwdb `20-usb-vendor-model.hwdb`: `usb:v0483pDF11*` is "STM Device in DFU Mode"
   ([github](https://github.com/systemd/systemd/blob/main/hwdb.d/20-usb-vendor-model.hwdb)).
 - Keychron `qmk_firmware`, `keyboards/keychron/k2_he/info.json`: `STM32F401`, `stm32-dfu`, vid `0x3434`
@@ -291,15 +253,9 @@ without the queued builtin, which is the failure the file number prevents.
   ([github](https://github.com/Keychron/qmk_firmware/blob/wireless_playground/keyboards/lemokey/p1_pro/info.json)).
 - QMK `qmk_udev`, `50-qmk.rules`: WB32 DFU is `342d:dfa0`
   ([github](https://github.com/qmk/qmk_udev/blob/main/50-qmk.rules)).
-- Arch `extra/dfu-util 0.11-3` installs `/usr/lib/udev/rules.d/60-dfuse.rules`; this tool
-  does not depend on it ([archlinux.org](https://archlinux.org/packages/extra/x86_64/dfu-util/)).
-- Linux `drivers/hid/hid-core.c` and `drivers/hid/hidraw.c`: `HID_ID`/`HID_NAME` uevent keys
-  and the hidraw class device's HID parent ([github](https://github.com/torvalds/linux/tree/master/drivers/hid)).
-- Keychron, "How to Restore Factory Settings and Update Firmware on Launcher"
-  ([keychron.com](https://www.keychron.com/pages/how-to-factory-reset-or-use-the-launcher-web-app-to-flash-firmware-for-your-keyboard)).
-- Keychron, "How to Flash the Firmware for the Keychron Receiver": Windows-only updater
-  ([keychron.com](https://www.keychron.com/pages/how-to-flash-the-firmware-for-the-keychron-receiver)).
+- Linux `drivers/hid/hidraw.c`: `HID_ID`/`HID_NAME` uevent keys on the hidraw parent
+  ([github](https://github.com/torvalds/linux/tree/master/drivers/hid)).
 - fish CHANGELOG: `string match --groups-only` (3.4.0), `string split --fields` and
   `string pad` (3.2.0) ([github](https://github.com/fish-shell/fish-shell/blob/master/CHANGELOG.rst)).
-- fish `share/functions/diff.fish`: fish autoloads a `diff` function adding `--color=auto`
-  ([github](https://github.com/fish-shell/fish-shell/blob/master/share/functions/diff.fish)).
+- Keychron, "How to Flash the Firmware for the Keychron Receiver": Windows-only updater
+  ([keychron.com](https://www.keychron.com/pages/how-to-flash-the-firmware-for-the-keychron-receiver)).

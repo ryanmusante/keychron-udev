@@ -1,6 +1,6 @@
 #!/usr/bin/env fish
 # keychron-udev.fish 1.1.0 (2026-08-29): udev access for Keychron Launcher (WebHID) and DFU (WebUSB)
-# Exit codes: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift (--check) / 5 verify failed / 128+N signals
+# Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift / 5 verify failed / 128+N signals
 
 # ── SETTINGS ──
 set -g VERSION 1.1.0
@@ -19,9 +19,6 @@ set -g _TMP ''
 set -g _LOCK ''
 set -g _LOG ''
 set -g _SIG 0
-set -g NODEV 'no Keychron or Lemokey USB device: put the toggle on Cable, or plug the receiver in'
-set -g INDFU 'board is in bootloader mode; it re-enumerates after a flash'
-set -g NONODE 'no hidraw or DFU node to dry-run against; installing the rule unverified'
 
 # ── OUTPUT AND LIFECYCLE ──
 # a handler cannot exit with a code, so it records the number and the next message exits 128+N
@@ -70,17 +67,13 @@ end
 function _usage -d 'Print the usage text to stdout'
     printf '%s\n' \
         "keychron-udev.fish $VERSION: udev access for Keychron Launcher (WebHID) and DFU (WebUSB)" \
-        'Usage: keychron-udev.fish [-c|--check | -i|--install | -v|--verify | -u|--uninstall]' \
-        '                          [-h|--help] [-V|--version]' \
-        "  --check     (default) list Keychron, Lemokey and DFU devices, compare $RULE" \
-        '              with the expected rule; no system change, no sudo' \
-        '  --install   dry-run with udevadm test -D, back up and diff any existing file,' \
-        '              write atomically, reload udev, re-add the live nodes, verify' \
-        '  --verify    confirm the current user has rw on every matched hidraw node' \
-        '              and on a DFU device when present' \
+        'Usage: keychron-udev.fish [-c|-i|-v|-u|-h|-V]' \
+        '  long forms: --check --install --verify --uninstall --help --version' \
+        "  --check     (default) list matched devices, compare $RULE; no change, no sudo" \
+        '  --install   dry-run, back up and diff, write, reload udev, re-add nodes, verify' \
+        '  --verify    confirm rw on every matched hidraw node and DFU device' \
         "  --uninstall back up and remove $RULE, then reload udev" \
-        'Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift / 5 verify failed / 128+N signals' \
-        'Env:  NO_COLOR (non-empty) or TERM=dumb disable color; XDG_STATE_HOME holds the log and backups'
+        'Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift / 5 verify / 128+N signals'
 end
 
 # ── DEVICE READERS ──
@@ -101,12 +94,6 @@ function _usb_list -d 'List one vendor as vid:pid|product|mfr|bus|dev' --argumen
         set -l bus (_attr $d/busnum)
         set -l num (_attr $d/devnum)
         printf '%s:%s|%s|%s|%s|%s\n' $vid "$p" "$prod" "$mfr" "$bus" "$num"
-    end
-end
-
-function _kbd_list -d 'List every keyboard-vendor USB device as vid:pid|product|mfr|bus|dev'
-    for v in $KC_VIDS
-        _usb_list $v
     end
 end
 
@@ -165,11 +152,6 @@ function _diff -d 'Print a unified diff to stderr when diffutils is installed' -
     return 0
 end
 
-function _backup -d 'Copy the installed rule aside, with sudo when unreadable' --argument-names dst bak
-    install -m 0644 -- $dst $bak 2>/dev/null; and return 0
-    sudo install -m 0600 -o (id -u) -g (id -g) -- $dst $bak
-end
-
 function _lock -d 'Take the single-run lock for a privileged mode'
     set -l lockdir /tmp
     test -n "$XDG_RUNTIME_DIR"; and set lockdir $XDG_RUNTIME_DIR
@@ -178,10 +160,13 @@ function _lock -d 'Take the single-run lock for a privileged mode'
     set -g _LOCK $lock
 end
 
-function _save_aside -d 'Back the installed rule up under the state dir and print the path' --argument-names dst
+function _save_aside -d 'Copy the rule under the state dir, print the path' --argument-names dst
     mkdir -p -m 0700 -- $STATE_DIR; or _die 1 "cannot create $STATE_DIR"
     set -l bak $STATE_DIR/(date +%Y%m%dT%H%M%S)-$RULE.bak
-    _backup $dst $bak; or _die 1 "backup failed: $bak"
+    # install, not cp: it is umask-immune. sudo fallback for a rule the user cannot read
+    install -m 0644 -- $dst $bak 2>/dev/null
+    or sudo install -m 0600 -o (id -u) -g (id -g) -- $dst $bak
+    or _die 1 "backup failed: $bak"
     echo $bak
 end
 
@@ -241,9 +226,14 @@ end
 
 # ── MODES ──
 function _inventory -d 'Print the keyboard, DFU and hidraw devices present'
-    set -l usb (_kbd_list)
+    set -l usb
+    for v in $KC_VIDS
+        set -a usb (_usb_list $v)
+    end
     set -l dfu (_dfu_list)
-    test (count $usb) -gt 0; or test (count $dfu) -gt 0; or _msg WARN $NODEV
+    if test (count $usb) -eq 0; and test (count $dfu) -eq 0
+        _msg WARN 'no Keychron or Lemokey USB device: set the toggle to Cable, or plug the receiver in'
+    end
     for u in $usb
         set -l f (string split -- '|' $u)
         _msg INFO "usb $f[1] $f[2] ($f[3]) bus $f[4] dev $f[5]"
@@ -252,7 +242,9 @@ function _inventory -d 'Print the keyboard, DFU and hidraw devices present'
         set -l f (string split -- '|' $u)
         _msg INFO "dfu $f[1] $f[2] ($f[3]) bus $f[4] dev $f[5]"
     end
-    test (count $usb) -gt 0; or test (count $dfu) -eq 0; or _msg INFO $INDFU
+    if test (count $usb) -eq 0; and test (count $dfu) -gt 0
+        _msg INFO 'board is in bootloader mode; it re-enumerates after a flash'
+    end
     for h in (_hidraw_list)
         set -l f (string split -- '|' $h)
         _msg INFO "hidraw $f[1] pid $f[2] ($f[3])"
@@ -289,7 +281,9 @@ function _install -d 'Dry-run the candidate, write it, reload udev, re-add the l
     sudo -v; or _die 3 'sudo authentication failed'
     _rule_text >$_TMP/$RULE
     set -l nodes (_hidraw_list | string split -f1 -- '|') (_dfu_nodes)
-    test (count $nodes) -gt 0; or _msg WARN $NONODE
+    if test (count $nodes) -eq 0
+        _msg WARN 'no hidraw or DFU node to dry-run against; installing the rule unverified'
+    end
     for n in $nodes
         _dry_run $n $_TMP; or _die 1 'candidate rule failed the udevadm dry-run; nothing written'
     end
@@ -340,19 +334,11 @@ function _verify -d 'Check read-write access on every matched node; exit 5 on fa
         end
     end
     test $fail -eq 0; or _die 5 'access not live: replug the device, or run --install'
-    command -q getfacl; or return 0
-    for t in $targets
-        set -l node (string split -f1 -- '|' $t)
-        for l in (getfacl -p $node 2>/dev/null | string match -r -- '^user:[^:]+:.+')
-            _msg INFO "$node acl $l"
-        end
-    end
-    # the ACL display is informational: an entry-less node must not become exit 1
-    return 0
 end
 
 # ── MAIN ──
-argparse -n keychron-udev -x check,install,verify,uninstall h/help V/version c/check i/install v/verify u/uninstall -- $argv; or exit 2
+set -l spec h/help V/version c/check i/install v/verify u/uninstall
+argparse -n keychron-udev -x check,install,verify,uninstall $spec -- $argv; or exit 2
 if set -q _flag_help
     _usage
     exit 0
@@ -368,7 +354,9 @@ set -q _flag_verify; and set mode verify
 set -q _flag_uninstall; and set mode uninstall
 _preflight $mode
 _log_open $mode
-set -g _TMP (mktemp -d --tmpdir keychron-udev.XXXXXX); or _die 1 'mktemp failed'
+if contains -- $mode check install
+    set -g _TMP (mktemp -d --tmpdir keychron-udev.XXXXXX); or _die 1 'mktemp failed'
+end
 switch $mode
     case install
         _install

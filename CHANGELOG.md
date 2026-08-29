@@ -1,3 +1,28 @@
+1.1.0 (2026-08-29)
+------------------
+
+  - rule: add hidraw vid 362d; Lemokey boards declare 0x362D, not 0x3434,
+    in Keychron's own QMK tree, so the 3434 line never matched them
+  - rule: add usb 342d:dfa0 (WB32 DFU); Lemokey P1 Pro is wb32-dfu, so a
+    board in that bootloader got no ACL and its flash failed part-way
+  - settings: the KC_VID and DFU_VID/DFU_PID scalars become the KC_VIDS and
+    DFU_IDS lists; rule text, device scans and verify all iterate them
+  - check: list and verify every matched vendor, not vid 3434 alone; a board
+    in a non-ST bootloader is no longer reported as absent
+  - uninstall: new -u/--uninstall mode; backs the rule up under the state
+    dir, removes it with sudo, reloads udev; rc 0 when already absent
+  - preflight: --uninstall needs sudo but not systemd-udev >= 258; the 258
+    floor gates udevadm test -D, which only --install runs
+  - install: the lock and the state-dir backup move into _lock and
+    _save_aside, shared with --uninstall
+  - docs: drop the receiver product id and the receiver firmware version
+    floor; neither was verifiable from a first-party source
+  - docs: cite 60-dfuse.rules as a path the dfu-util package installs, not
+    as a rule whose contents this tool depends on
+  - docs: record that all 71 Keychron board configs in Keychron's QMK tree
+    declare stm32-dfu on vid 0x3434, the K2 HE among them
+
+
 1.0.0 (2026-08-26)
 ------------------
 

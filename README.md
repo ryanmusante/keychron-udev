@@ -236,32 +236,3 @@ the environment: `_save_aside` can fall back to `sudo install` into
 `$XDG_STATE_HOME`. It copies the rule file's own contents to a path the invoking
 user chose, owned by that user at 0644, so it grants nothing that user did not
 already have.
-
-## Sources
-
-- systemd `rules.d/73-seat-late.rules.in`: `TAG=="uaccess|xaccess-*", ENV{MAJOR}!="", RUN{builtin}+="uaccess"`
-  ([github](https://github.com/systemd/systemd/blob/main/rules.d/73-seat-late.rules.in)).
-- systemd `rules.d/50-udev-default.rules.in`: `SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", MODE="0664"`
-  ([github](https://github.com/systemd/systemd/blob/main/rules.d/50-udev-default.rules.in)).
-- systemd `src/udev/udev-dump.c`: JSON keys `tags`, `currentTags`, `queuedCommands`
-  ([github](https://github.com/systemd/systemd/blob/main/src/udev/udev-dump.c)).
-- systemd `src/udev/udev-rules.c`, `udev_rules_load()`: `-D` directories are placed
-  ahead of the system rules directories, so the candidate outranks an installed
-  file of the same name
-  ([github](https://github.com/systemd/systemd/blob/main/src/udev/udev-rules.c)).
-- systemd `src/udev/udevadm.c`, `print_version()`: `udevadm --version` prints the
-  version as a bare integer
-  ([github](https://github.com/systemd/systemd/blob/main/src/udev/udevadm.c)).
-- udevadm(8), systemd 261.2: `test` accepts `/dev/` paths, `--json=`, `-D` (added in 258),
-  `control --reload`, `trigger --action= --settle` ([man.archlinux.org](https://man.archlinux.org/man/udevadm.8)).
-- udev(7): `ATTRS{}` searches the devpath upwards ([man.archlinux.org](https://man.archlinux.org/man/udev.7)).
-- systemd hwdb `20-usb-vendor-model.hwdb`: `usb:v0483pDF11*` is "STM Device in DFU Mode"
-  ([github](https://github.com/systemd/systemd/blob/main/hwdb.d/20-usb-vendor-model.hwdb)).
-- Keychron `qmk_firmware`, `keyboards/keychron/k2_he/info.json`: `STM32F401`, `stm32-dfu`, vid `0x3434`
-  ([github](https://github.com/Keychron/qmk_firmware/blob/hall_effect_playground/keyboards/keychron/k2_he/info.json)).
-- Keychron `qmk_firmware`, `keyboards/lemokey/p1_pro/info.json`: `WB32F3G71`, `wb32-dfu`, vid `0x362D`
-  ([github](https://github.com/Keychron/qmk_firmware/blob/wireless_playground/keyboards/lemokey/p1_pro/info.json)).
-- QMK `qmk_udev`, `50-qmk.rules`: WB32 DFU is `342d:dfa0`
-  ([github](https://github.com/qmk/qmk_udev/blob/main/50-qmk.rules)).
-- Linux `drivers/hid/hidraw.c`: `HID_ID`/`HID_NAME` uevent keys on the hidraw parent
-  ([github](https://github.com/torvalds/linux/tree/master/drivers/hid)).

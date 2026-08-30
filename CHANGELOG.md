@@ -1,3 +1,35 @@
+1.2.0 (2026-08-29)
+------------------
+
+  - logging: drop the run log; every line already goes to stderr, and the file
+    grew in the state directory without rotation or a size bound
+  - backup: timestamp the copy with milliseconds, so two runs inside the same
+    second no longer overwrite one another's file; both paths write 0644
+  - lock: fall back to /tmp when XDG_RUNTIME_DIR is set but is not a
+    directory; mkdir failed there and reported a phantom lock holder
+  - install: a failed udevadm trigger is a warning, not rc 1; the rule is
+    written and loaded by then, and the verify checks that follow report
+    whether access is live
+  - rule: the generated comments no longer repeat the vendor ids the rule
+    lines carry, so a vid added to KC_VIDS or DFU_IDS cannot leave the prose
+    stale; the file text changes, so --check reports drift on a 1.1.0 install
+    until --install is re-run
+  - check: hash and diff the expected rule through a pipe; only --install
+    stages a temp directory, for its udevadm test -D dry-run
+  - diff: label the sides with the installed path and "expected" instead of
+    the temp path the candidate happened to occupy
+  - readers: one pass over the USB tree classifies boards and bootloaders
+    together, replacing the per-vendor and per-bootloader passes; the path
+    builtin replaces a dirname process per device
+  - preflight: drop the `id` existence check, the only one of its kind among a
+    dozen coreutils callers; the rules-directory check now runs for the two
+    modes that touch it, not for --verify
+  - usage: list each short flag with its long form
+  - internals: one signal handler for INT, TERM and HUP in place of three;
+    mode-name dispatch in place of the switch block; --preserve-root dropped
+    from the temp-dir removal, where it is rm's default
+
+
 1.1.0 (2026-08-29)
 ------------------
 

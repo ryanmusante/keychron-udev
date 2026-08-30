@@ -1,21 +1,23 @@
 #!/usr/bin/env fish
-# keychron-udev.fish 1.2.0 (2026-08-29): udev access for Keychron Launcher (WebHID) and DFU (WebUSB)
+# keychron-udev.fish 1.3.0 (2026-08-30): udev access for Keychron Launcher (WebHID) and DFU (WebUSB)
 # Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift / 5 verify failed / 128+N signals
 
 # ── SETTINGS ──
-set -g VERSION 1.2.0
+set -g VERSION 1.3.0
 set -g RULE 70-keychron.rules
-# Keychron boards declare vid 0x3434, Lemokey boards 0x362D, in Keychron's own QMK tree
+# both vids are Keychron-group: 0x3434, and 0x362D on Lemokey and the Keychron X series
 set -g KC_VIDS 3434 362d
-# vid:pid of every bootloader a Launcher board re-enumerates as: ST ROM DFU, WB32 DFU
+# vid:pid of the bootloaders covered here: ST ROM DFU, WB32 DFU. See README on atmel-dfu
 set -g DFU_IDS 0483:df11 342d:dfa0
 set -g SYSFS /sys
 set -g DEVFS /dev
 set -g RULES_DIR /etc/udev/rules.d
 set -g RULE_PATH $RULES_DIR/$RULE
 set -g SEAT_LATE /usr/lib/udev/rules.d/73-seat-late.rules
-test -n "$XDG_STATE_HOME"; or set -l XDG_STATE_HOME $HOME/.local/state
-set -g STATE_DIR $XDG_STATE_HOME/keychron-udev
+# XDG basedir: an unset, empty or relative value is invalid and falls back
+set -l state "$XDG_STATE_HOME"
+string match -q -- '/*' "$state"; or set state $HOME/.local/state
+set -g STATE_DIR $state/keychron-udev
 set -g _SIG 0
 
 # ── OUTPUT AND LIFECYCLE ──
@@ -58,8 +60,9 @@ function _usage -d 'Print the usage text to stdout'
         '  -i --install    dry-run, back up and diff, write, reload udev, re-add, verify' \
         '  -v --verify     confirm rw on every matched hidraw node and DFU device' \
         "  -u --uninstall  back up and remove $RULE, then reload udev" \
-        '  -h --help       this text        -V --version   print the version' \
-        'Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift / 5 verify / 128+N signals'
+        '  -h --help       this text' \
+        '  -V --version    print the version' \
+        'Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift / 5 verify failed / 128+N signals'
 end
 
 # ── DEVICE READERS ──
@@ -106,6 +109,7 @@ function _hidraw_list -d 'List USB-bus hidraw nodes of a matched vendor as /dev/
         set -l id (string match -rg -- '^HID_ID=0003:0000([0-9A-Fa-f]{4}):0000([0-9A-Fa-f]{4})$' $lines)
         test (count $id) -eq 2; and contains -- (string lower -- $id[1]) $KC_VIDS; or continue
         set -l name (string match -rg -- '^HID_NAME=(.*)$' $lines | string replace -a -- '|' '/')
+        test -n "$name"; or set name unnamed
         printf '%s|%s|%s\n' $DEVFS/$node (string lower -- $id[2]) "$name"
     end
 end
@@ -141,7 +145,8 @@ end
 function _lock -d 'Take the single-run lock for a privileged mode'
     set -l lockdir /tmp
     test -d "$XDG_RUNTIME_DIR"; and set lockdir $XDG_RUNTIME_DIR
-    set -l lock $lockdir/keychron-udev.lock
+    # per-uid name: the /tmp fallback is shared, and a foreign lock dir cannot be removed
+    set -l lock $lockdir/keychron-udev-(id -u).lock
     mkdir -- $lock 2>/dev/null; or _die 1 "another run holds $lock (rmdir it if no run is active)"
     set -g _LOCK $lock
 end
@@ -252,7 +257,8 @@ function _install -d 'Dry-run the candidate, write it, reload udev, re-add the l
     _inventory
     sudo -v; or _die 3 'sudo authentication failed'
     set -g _TMP (mktemp -d --tmpdir keychron-udev.XXXXXX); or _die 1 'mktemp failed'
-    _rule_text >$_TMP/$RULE
+    # unchecked, a failed stage would leave -D empty and the dry-run would pass on /etc
+    _rule_text >$_TMP/$RULE; or _die 1 "cannot stage the candidate rule in $_TMP"
     set -l nodes (_hidraw_list | string split -f1 -- '|') (_dfu_nodes)
     if test (count $nodes) -eq 0
         _msg WARN 'no hidraw or DFU node to dry-run against; installing the rule unverified'
@@ -312,7 +318,7 @@ function _verify -d 'Check read-write access on every matched node; exit 5 on fa
 end
 
 # ── MAIN ──
-argparse -n keychron-udev -x check,install,verify,uninstall \
+argparse -n keychron-udev.fish -x check,install,verify,uninstall \
     h/help V/version c/check i/install v/verify u/uninstall -- $argv; or exit 2
 if set -q _flag_help
     _usage

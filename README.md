@@ -1,6 +1,6 @@
 # keychron-udev
 
-Version 1.2.0 (2026-08-29). Script: `keychron-udev.fish`.
+Version 1.3.0 (2026-08-30). Script: `keychron-udev.fish`.
 
 udev access for Keychron Launcher on Linux.
 
@@ -14,19 +14,20 @@ Launcher stops at "HID device connected" and a flash stalls at 0 %.
 `keychron-udev.fish` installs `/etc/udev/rules.d/70-keychron.rules`, tagging both
 device classes `uaccess` so systemd-logind grants the active seat user a dynamic
 ACL. No `input` or `plugdev` group, no `MODE="0666"`, no per-user `GROUP=`. Both
-vendor IDs are covered: `3434` for Keychron boards, `362d` for Lemokey.
+Keychron-group vendor IDs are covered, `3434` and `362d`; neither maps cleanly
+to one brand.
 
 ## Requirements
 
-| Component  | Requirement                            | Notes |
-|------------|----------------------------------------|-------|
-| OS         | Arch-based distro, systemd-udev >= 258 | `udevadm test -D` added in 258; developed against 261.2 |
-| Shell      | fish >= 3.6                            | newest features used: `path` (3.5), `string match -g` (3.4), `string split -f` and `string pad` (3.2) |
-| Privileges | sudo for `--install` and `--uninstall` | `--check` and `--verify` never elevate |
-| Tools      | coreutils                              | `id`, `install`, `mv -T`, `rm`, `rmdir`, `mkdir`, `mktemp`, `sha256sum`, `cat`, `date` |
-| Optional   | diffutils                              | diff display before overwriting a rule |
-| Browser    | native Chrome, Chromium or Edge        | Snap and Flatpak sandboxes need device access granted separately |
-| Keyboard   | any Launcher board or receiver         | Keychron VID `3434`, Lemokey VID `362d` |
+| Component  | Requirement                               | Notes |
+|------------|-------------------------------------------|-------|
+| OS         | Arch-based distro; udev >= 258 to install | `udevadm test -D` added in 258, so the floor is `--install` only; developed against 261.2 |
+| Shell      | fish >= 3.6                               | newest features used: `path` (3.5), `string match -g` (3.4), `string split -f` and `string pad` (3.2) |
+| Privileges | sudo for `--install` and `--uninstall`    | `--check` and `--verify` never elevate |
+| Tools      | coreutils                                 | `id`, `install`, `mv -T`, `rm`, `rmdir`, `mkdir`, `mktemp`, `sha256sum`, `cat`, `date` |
+| Optional   | diffutils                                 | diff display before overwriting a rule |
+| Browser    | native Chrome, Chromium or Edge           | Snap and Flatpak sandboxes need device access granted separately |
+| Keyboard   | any Launcher board or receiver            | Keychron-group VIDs `3434` and `362d` |
 
 ## Quick Start
 
@@ -47,14 +48,14 @@ in Chrome, Connect, and use Firmware Update.
 
 ## Modes
 
-| Flag | Action | Elevates |
-|------|--------|----------|
-| `-c`, `--check`     | default; list matched devices and USB-bus hidraw nodes, compare the installed rule | no |
-| `-i`, `--install`   | dry-run, back up and diff an existing file, write, reload, re-add live nodes, verify | sudo |
-| `-v`, `--verify`    | confirm read-write access on every matched hidraw node and DFU device | no |
-| `-u`, `--uninstall` | back up and remove the rule, then reload udev | sudo |
-| `-h`, `--help`      | usage | no |
-| `-V`, `--version`   | version | no |
+| Flag                | Action | Elevates |
+|---------------------|--------|----------|
+| `-c`, `--check`     | default; list matched devices and USB-bus hidraw nodes, compare the installed rule | no       |
+| `-i`, `--install`   | dry-run, back up and diff an existing file, write, reload, re-add live nodes, verify | sudo     |
+| `-v`, `--verify`    | confirm read-write access on every matched hidraw node and DFU device | no       |
+| `-u`, `--uninstall` | back up and remove the rule, then reload udev | sudo     |
+| `-h`, `--help`      | usage | no       |
+| `-V`, `--version`   | version | no       |
 
 Diagnostics go to stderr; stdout carries only `--help` and `--version`. Only
 `--install` and `--uninstall` write anything, and only the paths below.
@@ -67,10 +68,11 @@ Color needs a terminal and is disabled by a non-empty `NO_COLOR` or `TERM=dumb`.
 | `/etc/udev/rules.d/70-keychron.rules` | the installed rule | 0644 root |
 | `/etc/udev/rules.d/70-keychron.rules.tmp` | write staging; inert to udev, which reads only `*.rules`; removed on failure, cleared on the next `--install` | 0644 root |
 | `$XDG_STATE_HOME/keychron-udev/<timestamp>-70-keychron.rules.bak` | backup of a replaced or removed rule; the timestamp carries milliseconds, so two runs in the same second keep both | 0644 |
-| `$XDG_RUNTIME_DIR/keychron-udev.lock` | lock held during `--install` and `--uninstall` | dir |
-| `$TMPDIR/keychron-udev.XXXXXX/` | `--install` only: stages the candidate for the `-D` dry-run, removed on exit | 0700 dir |
+| `$XDG_RUNTIME_DIR/keychron-udev-<uid>.lock` | lock held during `--install` and `--uninstall`; the uid keeps the `/tmp` fallback from colliding across users | dir |
+| `$TMPDIR/keychron-udev.XXXXXX/` | `--install` only: stages the candidate for the `-D` dry-run, removed on exit; `$TMPDIR` defaults to `/tmp` | 0700 dir |
 
-`XDG_STATE_HOME` defaults to `~/.local/state`. `XDG_RUNTIME_DIR` falls back to
+`XDG_STATE_HOME` must be absolute; unset, empty or relative falls back to
+`~/.local/state`, as the basedir spec requires. `XDG_RUNTIME_DIR` falls back to
 `/tmp` when it is unset, empty, or not a directory. The state directory is
 created 0700.
 
@@ -79,7 +81,7 @@ created 0700.
 | Code | Meaning |
 |------|---------|
 | 0 | ok |
-| 1 | error: dry-run, backup, write, remove, reload or lock failure |
+| 1 | error: temp dir, staging, dry-run, backup, write, remove, reload or lock failure |
 | 2 | usage error, or run as root |
 | 3 | preflight: missing `udevadm`, `sudo`, USB sysfs or rules dir; udev < 258 for `--install`; sudo authentication failed |
 | 4 | drift (`--check`): rule missing, unreadable, not a regular file, or differing from the expected text |
@@ -109,27 +111,37 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="342d", ATTRS{idProduct}=="dfa0", TAG+="uacce
 The hidraw lines cover every HID interface on the USB bus belonging to either
 vendor, a 2.4 GHz receiver included when it enumerates under one of them. They
 set no `MODE=`: the node stays `0600 root:root` and the ACL is the only grant.
-The
-usb lines cover the two bootloaders a Launcher board re-enumerates as. Neither
-line carries an `ACTION==` qualifier, so a synthetic re-add or change event
-applies it too. Bluetooth-attached boards expose no `idVendor` attribute and are
-never matched.
+The usb lines cover the two bootloaders a Launcher board re-enumerates as.
+Neither line carries an `ACTION==` qualifier, so a synthetic re-add or change
+event applies it too. Bluetooth-attached boards expose no `idVendor` attribute
+and are never matched.
 
-All 71 Keychron board configurations in Keychron's own QMK tree declare
-`stm32-dfu` on vid `0x3434`, the K2 HE among them. The three Lemokey
-configurations declare vid `0x362D`, and the Lemokey P1 Pro declares `wb32-dfu`
-on a WB32F3G71. ZMK-based Ultra boards are not in that tree, so their bootloader
-path is not covered here.
+On the two branches cited below, all 69 Keychron board configurations declare
+`stm32-dfu` on vid `0x3434`, the K2 HE among them, and all 5 Lemokey
+configurations declare vid `0x362D`: `l1`, `l3` and `p1_pro` on
+`wireless_playground`, `l1_he` and `p1_he` on `hall_effect_playground`. Vid
+`0x362D` is not Lemokey-only — the Keychron X series, `keyboards/keychron/x0`
+through `x6`, declares it too.
+
+Elsewhere in the same fork the bootloader varies but stays covered: the seven
+`wls_2025q1` boards on vid `0x3434` are `wb32-dfu`, as is the Lemokey P1 Pro on
+its WB32F3G71, and `342d:dfa0` matches both. `keyboards/keychron/q1v1` is the
+one exception, `atmel-dfu`, which enumerates as `03eb:2ff4`. That pair is
+deliberately absent: the Q1 V1 predates Launcher, and matching it would tag
+every ATmega32U4 sitting in DFU mode, a far wider grant than the two pairs
+above. No board in the tree uses an APM32, GD32V or AT32 bootloader, so those
+ids are absent as well. ZMK-based Ultra boards are not in the tree at all, so
+their bootloader path is not covered here.
 
 ## What `--install` Does
 
 1. Refuses root; checks `udevadm`, `sudo`, USB sysfs, the rules directory and
    `73-seat-late.rules`; requires systemd-udev 258 or later.
-2. Takes a lock directory under `XDG_RUNTIME_DIR` or `/tmp`, authenticates with
-   `sudo -v`.
-3. Writes the candidate to a private temp directory and runs
-   `sudo udevadm test --json=short -D <tmp> <node>` per live hidraw node and DFU
-   device. `-D` directories are searched before `/etc`, so an already-installed
+2. Takes a per-uid lock directory under `XDG_RUNTIME_DIR` or `/tmp`,
+   authenticates with `sudo -v`.
+3. Writes the candidate to a private temp directory, aborting there if that
+   write fails, and runs `sudo udevadm test --json=short -D <tmp> <node>` per
+   live hidraw node and DFU device. `-D` directories are searched before `/etc`, so an already-installed
    file of the same name cannot shadow the candidate under test. The JSON must
    list `uaccess` under `tags` and a queued `uaccess` builtin under
    `queuedCommands` — the second is the proof the file sorts before
@@ -161,10 +173,11 @@ sudo udevadm test --json=pretty /dev/hidrawN 2>/dev/null | jq '.tags, .queuedCom
 attempt with its error.
 
 Every exit code, both privileged modes and the signal, lock and color paths are
-exercised as an unprivileged user against a stub sysfs, reached by repointing
-`SYSFS`, `DEVFS`, `RULES_DIR` and `SEAT_LATE`. A candidate numbered 99 instead
-of 70 produces the tag without the queued builtin, which is the failure the file
-number prevents.
+exercised as an unprivileged user against a stub sysfs. The harness edits a
+throwaway copy of the script to repoint `SYSFS`, `DEVFS`, `RULES_DIR` and
+`SEAT_LATE`; there is no environment override for them, by design. A candidate
+numbered 99 instead of 70 produces the tag without the queued builtin, which is
+the failure the file number prevents.
 
 ## Uninstall
 
@@ -202,8 +215,8 @@ the receiver plugged in.
 **Verification fails over SSH.** The ACL goes to the active local seat session.
 Run the script from the desktop session that will run Chrome.
 
-**"another run holds the lock".** A previous run was killed before cleanup.
-`rmdir $XDG_RUNTIME_DIR/keychron-udev.lock`.
+**"another run holds the lock".** A previous run was killed before cleanup. The
+message names the directory; remove it with `rmdir`.
 
 ## Security Notes
 
@@ -218,7 +231,11 @@ stops being active.
 function can sit between the operator and the decision to overwrite a system rule
 file. `SYSFS`, `DEVFS`, `RULES_DIR`, `RULE_PATH` and `SEAT_LATE` are fixed
 `set -g` lines with no environment override, so nothing in the environment can
-redirect a privileged write.
+redirect the rule write. The backup is the one privileged write that does follow
+the environment: `_save_aside` can fall back to `sudo install` into
+`$XDG_STATE_HOME`. It copies the rule file's own contents to a path the invoking
+user chose, owned by that user at 0644, so it grants nothing that user did not
+already have.
 
 ## Sources
 

@@ -1,3 +1,40 @@
+1.3.0 (2026-08-30)
+------------------
+
+  - install: check the write that stages the candidate rule; an unwritable
+    temp dir left -D empty, the dry-run then passed against the installed
+    /etc file, and an unproven rule could reach disk
+  - lock: name the lock directory per uid; the /tmp fallback is shared, and a
+    directory another user created there cannot be removed with rmdir
+  - settings: resolve XDG_STATE_HOME without declaring a local of that name,
+    and treat a relative value as invalid, as the basedir spec requires
+  - readers: report a hidraw node whose uevent carries no HID_NAME as
+    "unnamed" rather than an empty pair of parentheses
+  - usage: give -V --version its own line, and print "verify failed" for exit
+    5, the wording the file header already uses
+  - main: argparse -n is keychron-udev.fish, so an option error and the usage
+    text name the same program
+  - docs: correct the board counts against Keychron's own QMK tree; the two
+    cited branches carry 69 Keychron and 5 Lemokey configurations, not 71 and
+    3, and vid 0x362D is not Lemokey-only, the Keychron X series declares it
+  - docs: record the bootloaders elsewhere in that fork; the wls_2025q1
+    boards and the Lemokey P1 Pro are wb32-dfu and already covered, q1v1 is
+    atmel-dfu and its 03eb:2ff4 is deliberately left out
+  - docs: the udev 258 floor is an --install requirement, not an OS one; note
+    the temp-dir and staging failures under exit 1, the per-uid lock path,
+    the TMPDIR default, and that the harness edits a copy of the script
+    instead of reading the environment
+  - settings: the two comments above KC_VIDS and DFU_IDS said 0x362D was
+    Lemokey and that the pairs covered every bootloader; both now match what
+    the tree shows and what the README says
+  - docs: qualify the security note; the rule write takes nothing from the
+    environment, but the backup does, since _save_aside can fall back to
+    sudo install into XDG_STATE_HOME; it writes the rule's own bytes to a
+    user-chosen path owned by that user at 0644
+  - docs: record that XDG_STATE_HOME must be absolute, that the lock is named
+    per uid, and that a failed candidate stage aborts --install
+
+
 1.2.0 (2026-08-29)
 ------------------
 

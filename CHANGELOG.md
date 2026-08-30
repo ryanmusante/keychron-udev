@@ -25,6 +25,9 @@
     dozen coreutils callers; the rules-directory check now runs for the two
     modes that touch it, not for --verify
   - usage: list each short flag with its long form
+  - docs: fold the test-kit description into Verification, drop the receiver
+    firmware entry and the fish CHANGELOG citation, and list the staging
+    directory in the files table
   - internals: one signal handler for INT, TERM and HUP in place of three;
     mode-name dispatch in place of the switch block; --preserve-root dropped
     from the temp-dir removal, where it is rm's default

@@ -107,8 +107,9 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="342d", ATTRS{idProduct}=="dfa0", TAG+="uacce
 > `input`.
 
 The hidraw lines cover every HID interface on the USB bus belonging to either
-vendor, including a 2.4 GHz receiver that enumerates under one of them. They set
-no `MODE=`: the node stays `0600 root:root` and the ACL is the only grant. The
+vendor, a 2.4 GHz receiver included when it enumerates under one of them. They
+set no `MODE=`: the node stays `0600 root:root` and the ACL is the only grant.
+The
 usb lines cover the two bootloaders a Launcher board re-enumerates as. Neither
 line carries an `ACTION==` qualifier, so a synthetic re-add or change event
 applies it too. Bluetooth-attached boards expose no `idVendor` attribute and are
@@ -159,18 +160,11 @@ sudo udevadm test --json=pretty /dev/hidrawN 2>/dev/null | jq '.tags, .queuedCom
 `jq` is optional. In Chrome, `chrome://device-log` lists every HID and USB access
 attempt with its error.
 
-The script is certified as an unprivileged user against a stub kit: a fake sysfs
-covering both vendors, both DFU pairs, a leading-zero `busnum`/`devnum`, empty
-`product` and `manufacturer` strings, and Bluetooth-bus and other-vendor
-negative controls, reached by repointing `SYSFS`, `DEVFS`, `RULES_DIR` and
-`SEAT_LATE` with `sed`. The cases cover every exit code, both privileged modes,
-reinstall on an unchanged rule, drift and its diff, a stale `.tmp`, a refused
-dry-run, a failed trigger, lock contention, a missing `XDG_RUNTIME_DIR`, an
-empty `XDG_STATE_HOME`, no device present at all, the udev 257/258 boundary,
-`SIGINT`/`SIGTERM`/`SIGHUP` with cleanup, `SIGPIPE` on `--help | head -n 1`, and
-the color gate across `NO_COLOR` unset, empty and non-empty plus `TERM=dumb`. A
-candidate numbered 99 instead of 70 was confirmed to produce the tag without the
-queued builtin, which is the failure the file number prevents.
+Every exit code, both privileged modes and the signal, lock and color paths are
+exercised as an unprivileged user against a stub sysfs, reached by repointing
+`SYSFS`, `DEVFS`, `RULES_DIR` and `SEAT_LATE`. A candidate numbered 99 instead
+of 70 produces the tag without the queued builtin, which is the failure the file
+number prevents.
 
 ## Uninstall
 

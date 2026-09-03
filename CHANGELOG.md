@@ -1,3 +1,38 @@
+1.4.0 (2026-09-02)
+------------------
+
+  - rule: add usb 2e3c:df11, the AT32 ROM DFU; the seven Keychron 8K boards on
+    the fork's 2025q3 branch declare at32-dfu, so their flash had no covered
+    node; the file text changes, so --check reports drift on a 1.3.0 install
+    until --install is re-run
+  - check: print the bootloader-mode hint whenever a dfu entry is listed; a
+    keyboard or receiver plugged in at the same time suppressed it
+  - lock: report a lock directory that cannot be created as such; every mkdir
+    failure read as a held lock, with advice to rmdir a directory that was
+    never there
+  - lock: ignore a relative XDG_RUNTIME_DIR and fall back to /tmp, as the
+    basedir spec requires and as XDG_STATE_HOME is handled since 1.3.0
+  - install: abort when a stale .rules.tmp cannot be removed; install would
+    otherwise copy into a directory of that name and mv could rename it over
+    the rule path
+  - settings: the KC_VIDS comment named a Keychron X series on 0x362D; the one
+    keyboards/keychron/x* entry is the Lemokey X0, so 0x362D is Lemokey-only;
+    the DFU_IDS comment names the AT32 DFU
+  - docs: name the fork the lists come from and date the census; on its
+    2025q3 branch the 8K boards are at32-dfu, no X series exists, 0x3434 is
+    Keychron and 0x362D is Lemokey, and seven of the wls_2025q1 boards, not
+    all of them, are wb32-dfu
+  - docs: the backup copy of a rule the user could not read is readable by
+    that user; the security note claimed the copy granted nothing new
+  - docs: --install warns rather than fails on a missing 73-seat-late.rules
+    and writes the rule unverified when no live node exists; exit 1 lists the
+    stale .tmp case; the lock entry quotes the message shape; the ACTION==
+    sentence covers every rule line, not "neither"
+  - docs: four bootloaders appear on the measured branches and three get a
+    line, not "three appear"; the diff display also runs on --check drift;
+    XDG_RUNTIME_DIR lists relative among the values that fall back
+
+
 1.3.0 (2026-08-30)
 ------------------
 

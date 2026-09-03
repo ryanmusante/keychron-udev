@@ -1,14 +1,14 @@
 #!/usr/bin/env fish
-# keychron-udev.fish 1.3.0 (2026-08-30): udev access for Keychron Launcher (WebHID) and DFU (WebUSB)
+# keychron-udev.fish 1.4.0 (2026-09-02): udev access for Keychron Launcher (WebHID) and DFU (WebUSB)
 # Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift / 5 verify failed / 128+N signals
 
 # ── SETTINGS ──
-set -g VERSION 1.3.0
+set -g VERSION 1.4.0
 set -g RULE 70-keychron.rules
-# both vids are Keychron-group: 0x3434, and 0x362D on Lemokey and the Keychron X series
+# both vids are Keychron-group: 0x3434 on Keychron boards, 0x362D on Lemokey boards. See README
 set -g KC_VIDS 3434 362d
-# vid:pid of the bootloaders covered here: ST ROM DFU, WB32 DFU. See README on atmel-dfu
-set -g DFU_IDS 0483:df11 342d:dfa0
+# vid:pid of the bootloaders covered here: ST ROM DFU, WB32 DFU, AT32 DFU. See README on atmel-dfu
+set -g DFU_IDS 0483:df11 342d:dfa0 2e3c:df11
 set -g SYSFS /sys
 set -g DEVFS /dev
 set -g RULES_DIR /etc/udev/rules.d
@@ -144,10 +144,13 @@ end
 
 function _lock -d 'Take the single-run lock for a privileged mode'
     set -l lockdir /tmp
-    test -d "$XDG_RUNTIME_DIR"; and set lockdir $XDG_RUNTIME_DIR
+    string match -q -- '/*' "$XDG_RUNTIME_DIR"; and test -d "$XDG_RUNTIME_DIR"; and set lockdir $XDG_RUNTIME_DIR
     # per-uid name: the /tmp fallback is shared, and a foreign lock dir cannot be removed
     set -l lock $lockdir/keychron-udev-(id -u).lock
-    mkdir -- $lock 2>/dev/null; or _die 1 "another run holds $lock (rmdir it if no run is active)"
+    if not mkdir -- $lock 2>/dev/null
+        test -d $lock; and _die 1 "another run holds $lock (rmdir it if no run is active)"
+        _die 1 "cannot create $lock"
+    end
     set -g _LOCK $lock
 end
 
@@ -164,7 +167,10 @@ end
 
 function _write_rule -d 'Keep an identical file, back up a differing one' --argument-names src
     # a run killed between install and mv leaves a root-owned .tmp; udev ignores it
-    test -e $RULE_PATH.tmp; and sudo rm -f -- $RULE_PATH.tmp; and _msg INFO "removed a stale $RULE_PATH.tmp"
+    if test -e $RULE_PATH.tmp
+        sudo rm -f -- $RULE_PATH.tmp; or _die 1 "cannot remove a stale $RULE_PATH.tmp"
+        _msg INFO "removed a stale $RULE_PATH.tmp"
+    end
     set -l want (_sha $src)
     set -l have (_sha $RULE_PATH)
     if test -n "$have"; and test "$have" = "$want"
@@ -221,7 +227,7 @@ function _inventory -d 'Print the keyboard, DFU and hidraw devices present'
     end
     if test (count $usb) -eq 0
         _msg WARN 'no Keychron or Lemokey USB device: set the toggle to Cable, or plug the receiver in'
-    else if not string match -q -- 'usb|*' $usb
+    else if string match -q -- 'dfu|*' $usb
         _msg INFO 'board is in bootloader mode; it re-enumerates after a flash'
     end
     for h in (_hidraw_list)

@@ -5,16 +5,16 @@
 # ── SETTINGS ──
 set -g VERSION 1.4.0
 set -g RULE 70-keychron.rules
-# both vids are Keychron-group: 0x3434 on Keychron boards, 0x362D on Lemokey boards. See README
+# 0x3434 is Keychron, 0x362D is Lemokey; see README
 set -g KC_VIDS 3434 362d
-# vid:pid of the bootloaders covered here: ST ROM DFU, WB32 DFU, AT32 DFU. See README on atmel-dfu
+# ST, WB32 and AT32 ROM DFU; atmel-dfu deliberately absent (README)
 set -g DFU_IDS 0483:df11 342d:dfa0 2e3c:df11
 set -g SYSFS /sys
 set -g DEVFS /dev
 set -g RULES_DIR /etc/udev/rules.d
 set -g RULE_PATH $RULES_DIR/$RULE
 set -g SEAT_LATE /usr/lib/udev/rules.d/73-seat-late.rules
-# XDG basedir: an unset, empty or relative value is invalid and falls back
+# basedir spec: unset, empty or relative is invalid and falls back
 set -l state "$XDG_STATE_HOME"
 string match -q -- '/*' "$state"; or set state $HOME/.local/state
 set -g STATE_DIR $state/keychron-udev
@@ -22,7 +22,7 @@ set -g _SIG 0
 
 # ── OUTPUT AND LIFECYCLE ──
 function _msg -d 'Print a leveled line to stderr' --argument-names lvl
-    # a signal handler cannot exit with a code, so it records the number and this exits 128+N
+    # a signal handler cannot exit; it records N and this exits 128+N
     test $_SIG -eq 0; or exit (math 128 + $_SIG)
     set -l c ''
     set -l r ''
@@ -66,12 +66,12 @@ function _usage -d 'Print the usage text to stdout'
 end
 
 # ── DEVICE READERS ──
-# callers quote the result: an unquoted empty read would shift printf arguments
 function _attr -d 'Print a sysfs attribute, or nothing when it is unreadable' --argument-names f
+    # callers quote it: an unquoted empty read shifts printf arguments
     test -r $f; and string trim -- (cat -- $f 2>/dev/null)
 end
 
-# one pass over the USB tree; sysfs prints both ids lowercase, so no case folding
+# sysfs prints both ids lowercase, so no case folding
 function _usb_scan -d 'List matched USB devices as kind|vid:pid|product|mfr|bus|dev'
     for f in $SYSFS/bus/usb/devices/*/idVendor
         set -l d (path dirname $f)
@@ -95,12 +95,12 @@ function _dfu_nodes -d 'Print the /dev/bus/usb node of every DFU device'
     for u in (_usb_scan)
         set -l f (string split -- '|' $u)
         test "$f[1]" = dfu; and test -n "$f[5]"; and test -n "$f[6]"; or continue
-        # not %03d: fish printf reads a leading-zero field as octal (012 -> 010, silently)
+        # not %03d: fish printf silently reads a leading-zero field as octal
         printf '%s/bus/usb/%s/%s\n' $DEVFS (string pad -c 0 -w 3 -- $f[5]) (string pad -c 0 -w 3 -- $f[6])
     end
 end
 
-# Bluetooth HID (bus 0005) exposes no idVendor attribute and is never rule-matched
+# Bluetooth HID (bus 0005) has no idVendor and is never rule-matched
 function _hidraw_list -d 'List USB-bus hidraw nodes of a matched vendor as /dev/hidrawN|pid|HID_NAME'
     for u in $SYSFS/class/hidraw/hidraw*/device/uevent
         test -r $u; or continue
@@ -115,8 +115,8 @@ function _hidraw_list -d 'List USB-bus hidraw nodes of a matched vendor as /dev/
 end
 
 # ── RULE AND FILE HELPERS ──
-# the comments carry no vendor ids: the rule lines below them are generated from the lists
 function _rule_text -d 'Print the expected udev rule file'
+    # the comments carry no ids; the rule lines come from the lists
     printf '%s\n' \
         "# $RULE: written by keychron-udev.fish. Keep the number below 73:" \
         '# 73-seat-late.rules is what turns the uaccess tag into an ACL.' \
@@ -131,7 +131,7 @@ function _rule_text -d 'Print the expected udev rule file'
     end
 end
 
-# `command` on both: fish ships functions/diff.fish, and a user hook must not sit in this path
+# `command`: fish ships diff.fish and no hook may sit in this path
 function _sha -d 'Print the sha256 of a file, or of stdin for -' --argument-names f
     command sha256sum -- $f 2>/dev/null | string sub -l 64
 end
@@ -145,7 +145,7 @@ end
 function _lock -d 'Take the single-run lock for a privileged mode'
     set -l lockdir /tmp
     string match -q -- '/*' "$XDG_RUNTIME_DIR"; and test -d "$XDG_RUNTIME_DIR"; and set lockdir $XDG_RUNTIME_DIR
-    # per-uid name: the /tmp fallback is shared, and a foreign lock dir cannot be removed
+    # per-uid: /tmp is shared and a foreign lock dir cannot be removed
     set -l lock $lockdir/keychron-udev-(id -u).lock
     if not mkdir -- $lock 2>/dev/null
         test -d $lock; and _die 1 "another run holds $lock (rmdir it if no run is active)"
@@ -156,9 +156,9 @@ end
 
 function _save_aside -d 'Copy the installed rule under the state dir, print the path'
     mkdir -p -m 0700 -- $STATE_DIR; or _die 1 "cannot create $STATE_DIR"
-    # milliseconds: two runs in the same second would otherwise overwrite one backup
+    # milliseconds: two runs in one second would overwrite one backup
     set -l bak $STATE_DIR/(date +%Y%m%dT%H%M%S.%3N)-$RULE.bak
-    # install, not cp: it is umask-immune. sudo fallback for a rule the user cannot read
+    # install not cp: umask-immune; sudo fallback for an unreadable rule
     install -m 0644 -- $RULE_PATH $bak 2>/dev/null
     or sudo install -m 0644 -o (id -u) -g (id -g) -- $RULE_PATH $bak
     or _die 1 "backup failed: $bak"
@@ -166,7 +166,7 @@ function _save_aside -d 'Copy the installed rule under the state dir, print the 
 end
 
 function _write_rule -d 'Keep an identical file, back up a differing one' --argument-names src
-    # a run killed between install and mv leaves a root-owned .tmp; udev ignores it
+    # a run killed between install and mv leaves a root-owned .tmp
     if test -e $RULE_PATH.tmp
         sudo rm -f -- $RULE_PATH.tmp; or _die 1 "cannot remove a stale $RULE_PATH.tmp"
         _msg INFO "removed a stale $RULE_PATH.tmp"
@@ -198,13 +198,13 @@ function _preflight -d 'Refuse root and missing dependencies; gate udev >= 258' 
     contains -- $mode install uninstall; or return 0
     command -q sudo; or _die 3 'sudo not found'
     test -d $RULES_DIR; or _die 3 "missing $RULES_DIR"
-    # only --install runs udevadm test -D, so only --install needs the 258 floor
+    # only --install runs udevadm test -D, so only it needs udev 258
     test "$mode" = install; or return 0
     set -l ver (udevadm --version | string match -r -- '^[0-9]+')
     test -n "$ver"; and test $ver -ge 258; or _die 3 "udevadm test -D needs systemd >= 258 (found: $ver)"
 end
 
-# -D wins over /etc for an equal filename, so this tests the candidate, not an installed rule
+# -D outranks /etc for an equal filename: this tests the candidate
 function _dry_run -d 'Prove the staged rule tags uaccess and queues the builtin' --argument-names node
     set -l json (sudo udevadm test --json=short -D $_TMP $node 2>/dev/null | string collect)
     set -l why
@@ -244,7 +244,7 @@ function _check -d 'Compare the installed rule with the expected text; return 4 
         return 4
     end
     set -l have (_sha $RULE_PATH)
-    # quoted: an unquoted empty substitution would collapse test's operand list
+    # quoted: an empty unquoted substitution collapses test's operands
     if test -z "$have"
         _msg WARN "$RULE_PATH is not a readable regular file"
         return 4
@@ -263,7 +263,7 @@ function _install -d 'Dry-run the candidate, write it, reload udev, re-add the l
     _inventory
     sudo -v; or _die 3 'sudo authentication failed'
     set -g _TMP (mktemp -d --tmpdir keychron-udev.XXXXXX); or _die 1 'mktemp failed'
-    # unchecked, a failed stage would leave -D empty and the dry-run would pass on /etc
+    # a failed stage would leave -D empty and the dry-run pass on /etc
     _rule_text >$_TMP/$RULE; or _die 1 "cannot stage the candidate rule in $_TMP"
     set -l nodes (_hidraw_list | string split -f1 -- '|') (_dfu_nodes)
     if test (count $nodes) -eq 0
@@ -275,7 +275,7 @@ function _install -d 'Dry-run the candidate, write it, reload udev, re-add the l
     _write_rule $_TMP/$RULE
     sudo udevadm control --reload; or _die 1 'udevadm control --reload failed'
     if test (count $nodes) -gt 0
-        # the rule is already live; a node that vanished mid-run only costs a replug
+        # the rule is live already; a vanished node only costs a replug
         sudo udevadm trigger --action=add --settle $nodes
         and _msg OK "re-added $nodes"
         or _msg WARN 'udevadm trigger failed; replug the device to pick the rule up'

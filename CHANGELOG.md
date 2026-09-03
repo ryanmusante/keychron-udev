@@ -1,73 +1,32 @@
 1.4.0 (2026-09-02)
 ------------------
 
-  - rule: add usb 2e3c:df11, the AT32 ROM DFU; the seven Keychron 8K boards on
-    the fork's 2025q3 branch declare at32-dfu, so their flash had no covered
-    node; the file text changes, so --check reports drift on a 1.3.0 install
-    until --install is re-run
-  - check: print the bootloader-mode hint whenever a dfu entry is listed; a
-    keyboard or receiver plugged in at the same time suppressed it
-  - lock: report a lock directory that cannot be created as such; every mkdir
-    failure read as a held lock, with advice to rmdir a directory that was
-    never there
-  - lock: ignore a relative XDG_RUNTIME_DIR and fall back to /tmp, as the
-    basedir spec requires and as XDG_STATE_HOME is handled since 1.3.0
-  - install: abort when a stale .rules.tmp cannot be removed; install would
-    otherwise copy into a directory of that name and mv could rename it over
-    the rule path
-  - settings: the KC_VIDS comment named a Keychron X series on 0x362D; the one
-    keyboards/keychron/x* entry is the Lemokey X0, so 0x362D is Lemokey-only;
-    the DFU_IDS comment names the AT32 DFU
-  - docs: name the fork the lists come from and date the census; on its
-    2025q3 branch the 8K boards are at32-dfu, no X series exists, 0x3434 is
-    Keychron and 0x362D is Lemokey, and seven of the wls_2025q1 boards, not
-    all of them, are wb32-dfu
-  - docs: the backup copy of a rule the user could not read is readable by
-    that user; the security note claimed the copy granted nothing new
-  - docs: --install warns rather than fails on a missing 73-seat-late.rules
-    and writes the rule unverified when no live node exists; exit 1 lists the
-    stale .tmp case; the lock entry quotes the message shape; the ACTION==
-    sentence covers every rule line, not "neither"
-  - docs: four bootloaders appear on the measured branches and three get a
-    line, not "three appear"; the diff display also runs on --check drift;
-    XDG_RUNTIME_DIR lists relative among the values that fall back
+  - rule: add usb 2e3c:df11, the AT32 ROM DFU of the Keychron 8K boards; the
+    file text changes, so --check reports drift until --install is re-run
+  - check: print the bootloader-mode hint whenever a dfu entry is listed
+  - lock: report a lock directory that cannot be created as such, not as a
+    held lock; ignore a relative XDG_RUNTIME_DIR and fall back to /tmp
+  - install: abort when a stale .rules.tmp cannot be removed
+  - settings: 0x362D is Lemokey-only, the one keyboards/keychron/x* entry
+    being the Lemokey X0; the DFU_IDS comment names the AT32 DFU
+  - docs: name and date the fork census (0x3434 Keychron, 0x362D Lemokey, 8K
+    boards at32-dfu); note the unverified no-node install, readable backup
 
 
 1.3.0 (2026-08-30)
 ------------------
 
   - install: check the write that stages the candidate rule; an unwritable
-    temp dir left -D empty, the dry-run then passed against the installed
-    /etc file, and an unproven rule could reach disk
+    temp dir left -D empty and the dry-run passed against the installed file
   - lock: name the lock directory per uid; the /tmp fallback is shared, and a
     directory another user created there cannot be removed with rmdir
   - settings: resolve XDG_STATE_HOME without declaring a local of that name,
     and treat a relative value as invalid, as the basedir spec requires
   - readers: report a hidraw node whose uevent carries no HID_NAME as
     "unnamed" rather than an empty pair of parentheses
-  - usage: give -V --version its own line, and print "verify failed" for exit
-    5, the wording the file header already uses
+  - usage: give -V --version its own line; print "verify failed" for exit 5
   - main: argparse -n is keychron-udev.fish, so an option error and the usage
     text name the same program
-  - docs: correct the board counts against Keychron's own QMK tree; the two
-    cited branches carry 69 Keychron and 5 Lemokey configurations, not 71 and
-    3, and vid 0x362D is not Lemokey-only, the Keychron X series declares it
-  - docs: record the bootloaders elsewhere in that fork; the wls_2025q1
-    boards and the Lemokey P1 Pro are wb32-dfu and already covered, q1v1 is
-    atmel-dfu and its 03eb:2ff4 is deliberately left out
-  - docs: the udev 258 floor is an --install requirement, not an OS one; note
-    the temp-dir and staging failures under exit 1, the per-uid lock path,
-    the TMPDIR default, and that the harness edits a copy of the script
-    instead of reading the environment
-  - settings: the two comments above KC_VIDS and DFU_IDS said 0x362D was
-    Lemokey and that the pairs covered every bootloader; both now match what
-    the tree shows and what the README says
-  - docs: qualify the security note; the rule write takes nothing from the
-    environment, but the backup does, since _save_aside can fall back to
-    sudo install into XDG_STATE_HOME; it writes the rule's own bytes to a
-    user-chosen path owned by that user at 0644
-  - docs: record that XDG_STATE_HOME must be absolute, that the lock is named
-    per uid, and that a failed candidate stage aborts --install
 
 
 1.2.0 (2026-08-29)
@@ -80,29 +39,20 @@
   - lock: fall back to /tmp when XDG_RUNTIME_DIR is set but is not a
     directory; mkdir failed there and reported a phantom lock holder
   - install: a failed udevadm trigger is a warning, not rc 1; the rule is
-    written and loaded by then, and the verify checks that follow report
-    whether access is live
-  - rule: the generated comments no longer repeat the vendor ids the rule
-    lines carry, so a vid added to KC_VIDS or DFU_IDS cannot leave the prose
-    stale; the file text changes, so --check reports drift on a 1.1.0 install
-    until --install is re-run
+    written and loaded by then; verify then reports whether access is live
+  - rule: the generated comments no longer repeat the vendor ids; the file
+    text changes, so --check reports drift on a 1.1.0 install until re-run
   - check: hash and diff the expected rule through a pipe; only --install
     stages a temp directory, for its udevadm test -D dry-run
   - diff: label the sides with the installed path and "expected" instead of
     the temp path the candidate happened to occupy
   - readers: one pass over the USB tree classifies boards and bootloaders
-    together, replacing the per-vendor and per-bootloader passes; the path
-    builtin replaces a dirname process per device
-  - preflight: drop the `id` existence check, the only one of its kind among a
-    dozen coreutils callers; the rules-directory check now runs for the two
-    modes that touch it, not for --verify
+    together; the path builtin replaces a dirname process per device
+  - preflight: drop the `id` existence check; the rules-directory check runs
+    for the two modes that touch it, not for --verify
   - usage: list each short flag with its long form
-  - docs: fold the test-kit description into Verification, drop the receiver
-    firmware entry and the fish CHANGELOG citation, and list the staging
-    directory in the files table
-  - internals: one signal handler for INT, TERM and HUP in place of three;
-    mode-name dispatch in place of the switch block; --preserve-root dropped
-    from the temp-dir removal, where it is rm's default
+  - internals: one signal handler for INT, TERM and HUP; mode-name dispatch
+    in place of the switch block; --preserve-root dropped, being rm's default
 
 
 1.1.0 (2026-08-29)
@@ -112,18 +62,13 @@
     0x362D and the Lemokey P1 Pro is wb32-dfu, so neither line matched them
   - settings: the KC_VID and DFU_VID/DFU_PID scalars become the KC_VIDS and
     DFU_IDS lists; rule text, device scans and verify all iterate them
-  - check: list and verify every matched vendor, not vid 3434 alone; a board
-    in a non-ST bootloader is no longer reported as absent
+  - check: list and verify every matched vendor, not vid 3434 alone
   - uninstall: new -u/--uninstall mode; backs the rule up under the state
     dir, removes it with sudo, reloads udev; rc 0 when already absent
   - preflight: --uninstall needs sudo but not systemd-udev >= 258; the 258
     floor gates udevadm test -D, which only --install runs
-  - verify: drop the getfacl ACL display and the acl dependency; the
-    read-write test already decides the result
-  - main: stage a temp dir only for --check and --install; --verify and
-    --uninstall never write a candidate file
-  - docs: drop the receiver product id, the receiver firmware floor and the
-    claim about 60-dfuse.rules contents; none was verifiable first-hand
+  - verify: drop the getfacl ACL display and the acl dependency
+  - main: stage a temp dir only for --check and --install
 
 
 1.0.0 (2026-08-26)
@@ -131,37 +76,28 @@
 
   - preflight: refuse root (rc 2); require id, udevadm, USB sysfs and
     /etc/udev/rules.d; --install also needs sudo and systemd-udev >= 258
-  - check: list Keychron USB devices, a board in the STM32 DFU bootloader, and
-    USB-bus hidraw nodes
-  - check: compare 70-keychron.rules with the expected text by sha256; rc 4 on
-    drift, on a missing file, and on one that cannot be hashed
+  - check: list Keychron USB devices, STM32 DFU boards and USB-bus hidraw
+    nodes; compare 70-keychron.rules by sha256, rc 4 on drift or missing file
   - install: udevadm test --json=short -D dry-run on every live hidraw node
-    and STM32 DFU device; require the uaccess tag and a queued uaccess
-    builtin, else abort before writing
+    and DFU device; require the uaccess tag and queued builtin, else abort
   - install: clear a stale .rules.tmp; leave an identical file untouched or
     back up a differing one (0644) with a diff; write via .tmp + mv -T; reload
   - install: back up a rule the invoking user cannot read with sudo install
     -m 0600 -o <uid> -g <gid>; abort before writing if it cannot be copied
-  - install: udevadm trigger --action=add --settle on the live hidraw nodes
-    and DFU devices so the ACL lands without a replug; then the verify checks
-  - install: a failed write removes its .tmp; empty XDG vars fall back per
-    spec; '|' in sysfs strings is sanitized before field parsing
+  - install: udevadm trigger --action=add --settle on the live nodes so the
+    ACL lands without a replug; a failed write removes its .tmp
   - verify: read-write check as the invoking user on every Keychron hidraw
-    node and on an STM32 DFU device node when present; rc 5 on failure
+    node and STM32 DFU node, rc 5 on failure; getfacl display informational
   - verify: DFU node paths built with string pad, not printf %03d, which reads
     a leading-zero busnum or devnum as octal
-  - verify: the getfacl ACL display is informational; a node without a named
-    user entry cannot turn a passing verify into exit 1
-  - rule: hidraw VID 3434 (boards and Link receiver) plus usb 0483:df11 (STM32
-    DFU), both TAG+="uaccess", file number 70 so 73-seat-late.rules applies it
-  - rule: no MODE= on the hidraw line; the node stays 0600 root:root and the
-    uaccess ACL is the only grant
+  - rule: hidraw VID 3434 plus usb 0483:df11, both TAG+="uaccess", file
+    number 70 so 73-seat-late.rules applies it; no MODE=, the ACL is the grant
   - readers: sysfs and uevent reads are guarded; a node that disappears or is
     unreadable mid-scan is skipped, not reported on stderr
   - signals: INT/TERM/HUP exit 130/143/129 after cleanup; mkdir lock under
     XDG_RUNTIME_DIR; temp dir removed on exit
-  - logging: the run log opens after preflight; every line of a check, install
-    or verify run is mirrored to it (0600); path shown at exit
+  - logging: the run log opens after preflight; every line is mirrored to it
+    (0600); path shown at exit
   - output: diagnostics on stderr, stdout only for --help and --version; color
     only on a tty, disabled by non-empty NO_COLOR or TERM=dumb
   - output: sha256 and diff run through `command`, past fish's own diff

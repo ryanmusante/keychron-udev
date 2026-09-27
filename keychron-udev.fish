@@ -1,9 +1,9 @@
 #!/usr/bin/env fish
-# keychron-udev.fish 1.4.0 (2026-09-02): udev access for Keychron Launcher (WebHID) and DFU (WebUSB)
-# Exit: 0 ok / 1 error / 2 usage or root / 3 preflight / 4 drift / 5 verify failed / 128+N signals
+# keychron-udev.fish 1.6.0 (2026-09-27): udev access for Keychron Launcher (WebHID) and DFU (WebUSB)
+# Externals but sudo use `command`: fish wraps diff; config.fish, read by scripts too, may alias any
 
 # ── SETTINGS ──
-set -g VERSION 1.4.0
+set -g VERSION 1.6.0
 set -g RULE 70-keychron.rules
 # 0x3434 is Keychron, 0x362D is Lemokey; see README
 set -g KC_VIDS 3434 362d
@@ -13,12 +13,16 @@ set -g SYSFS /sys
 set -g DEVFS /dev
 set -g RULES_DIR /etc/udev/rules.d
 set -g RULE_PATH $RULES_DIR/$RULE
+set -g RULE_META '-rw-r--r-- uid 0'
 set -g SEAT_LATE /usr/lib/udev/rules.d/73-seat-late.rules
 # basedir spec: unset, empty or relative is invalid and falls back
 set -l state "$XDG_STATE_HOME"
 string match -q -- '/*' "$state"; or set state $HOME/.local/state
 set -g STATE_DIR $state/keychron-udev
 set -g _SIG 0
+# empty globals: an inherited or universal _TMP would reach the exit rm -rf
+set -g _TMP
+set -g _LOCK
 
 # ── OUTPUT AND LIFECYCLE ──
 function _msg -d 'Print a leveled line to stderr' --argument-names lvl
@@ -42,11 +46,11 @@ function _die -d 'Print a FAIL line and exit with the given code' --argument-nam
 end
 
 function _cleanup -d 'Remove the temp dir and lock on exit' --on-event fish_exit
-    test -n "$_TMP"; and rm -rf -- $_TMP
-    test -n "$_LOCK"; and rmdir -- $_LOCK 2>/dev/null
+    test -n "$_TMP"; and command rm -rf -- $_TMP
+    test -n "$_LOCK"; and command rmdir -- $_LOCK 2>/dev/null
 end
 
-function _sig -d 'Record a signal for the next message' --on-signal INT --on-signal TERM --on-signal HUP
+function _sig -d 'Record a signal for the next message or the final exit' --on-signal INT --on-signal TERM --on-signal HUP
     set -g _SIG 1
     test "$argv[1]" = SIGINT; and set -g _SIG 2
     test "$argv[1]" = SIGTERM; and set -g _SIG 15
@@ -68,7 +72,7 @@ end
 # ── DEVICE READERS ──
 function _attr -d 'Print a sysfs attribute, or nothing when it is unreadable' --argument-names f
     # callers quote it: an unquoted empty read shifts printf arguments
-    test -r $f; and string trim -- (cat -- $f 2>/dev/null)
+    test -r $f; and string trim -- (command cat -- $f 2>/dev/null)
 end
 
 # sysfs prints both ids lowercase, so no case folding
@@ -100,12 +104,12 @@ function _dfu_nodes -d 'Print the /dev/bus/usb node of every DFU device'
     end
 end
 
-# Bluetooth HID (bus 0005) has no idVendor and is never rule-matched
+# Bluetooth HID (bus 0005) has no Keychron or Lemokey USB device above it: never rule-matched
 function _hidraw_list -d 'List USB-bus hidraw nodes of a matched vendor as /dev/hidrawN|pid|HID_NAME'
     for u in $SYSFS/class/hidraw/hidraw*/device/uevent
         test -r $u; or continue
         set -l node (string replace -r -- '^.*/(hidraw[0-9]+)/device/uevent$' '$1' $u)
-        set -l lines (cat -- $u 2>/dev/null)
+        set -l lines (command cat -- $u 2>/dev/null)
         set -l id (string match -rg -- '^HID_ID=0003:0000([0-9A-Fa-f]{4}):0000([0-9A-Fa-f]{4})$' $lines)
         test (count $id) -eq 2; and contains -- (string lower -- $id[1]) $KC_VIDS; or continue
         set -l name (string match -rg -- '^HID_NAME=(.*)$' $lines | string replace -a -- '|' '/')
@@ -116,7 +120,7 @@ end
 
 # ── RULE AND FILE HELPERS ──
 function _rule_text -d 'Print the expected udev rule file'
-    # the comments carry no ids; the rule lines come from the lists
+    # the comments carry no ids, so the lists stay the only source
     printf '%s\n' \
         "# $RULE: written by keychron-udev.fish. Keep the number below 73:" \
         '# 73-seat-late.rules is what turns the uaccess tag into an ACL.' \
@@ -131,9 +135,20 @@ function _rule_text -d 'Print the expected udev rule file'
     end
 end
 
-# `command`: fish ships diff.fish and no hook may sit in this path
 function _sha -d 'Print the sha256 of a file, or of stdin for -' --argument-names f
-    command sha256sum -- $f 2>/dev/null | string sub -l 64
+    # sha256sum starts the line with a backslash when the name holds one or a newline
+    command sha256sum -- $f 2>/dev/null | string match -rg -- '^\\\\?([0-9a-f]{64}) '
+end
+
+function _meta -d 'Print the mode string and owner uid of the installed rule'
+    # %A not %F, whose file-type word is localized; no -L, so a symlink shows as l
+    command stat -c '%A uid %u' -- $RULE_PATH 2>/dev/null; or echo 'stat failed'
+end
+
+function _clear_tmp -d 'Remove the staging file a killed run left behind'
+    test -e $RULE_PATH.tmp; or return 0
+    sudo rm -f -- $RULE_PATH.tmp; or _die 1 "cannot remove a stale $RULE_PATH.tmp"
+    _msg INFO "removed a stale $RULE_PATH.tmp"
 end
 
 function _diff -d 'Diff a file against the expected rule, to stderr' --argument-names old
@@ -146,8 +161,8 @@ function _lock -d 'Take the single-run lock for a privileged mode'
     set -l lockdir /tmp
     string match -q -- '/*' "$XDG_RUNTIME_DIR"; and test -d "$XDG_RUNTIME_DIR"; and set lockdir $XDG_RUNTIME_DIR
     # per-uid: /tmp is shared and a foreign lock dir cannot be removed
-    set -l lock $lockdir/keychron-udev-(id -u).lock
-    if not mkdir -- $lock 2>/dev/null
+    set -l lock $lockdir/keychron-udev-(command id -u).lock
+    if not command mkdir -- $lock 2>/dev/null
         test -d $lock; and _die 1 "another run holds $lock (rmdir it if no run is active)"
         _die 1 "cannot create $lock"
     end
@@ -155,31 +170,30 @@ function _lock -d 'Take the single-run lock for a privileged mode'
 end
 
 function _save_aside -d 'Copy the installed rule under the state dir, print the path'
-    mkdir -p -m 0700 -- $STATE_DIR; or _die 1 "cannot create $STATE_DIR"
+    command mkdir -p -m 0700 -- $STATE_DIR; or _die 1 "cannot create $STATE_DIR"
     # milliseconds: two runs in one second would overwrite one backup
-    set -l bak $STATE_DIR/(date +%Y%m%dT%H%M%S.%3N)-$RULE.bak
+    set -l bak $STATE_DIR/(command date +%Y%m%dT%H%M%S.%3N)-$RULE.bak
     # install not cp: umask-immune; sudo fallback for an unreadable rule
-    install -m 0644 -- $RULE_PATH $bak 2>/dev/null
-    or sudo install -m 0644 -o (id -u) -g (id -g) -- $RULE_PATH $bak
+    command install -m 0644 -- $RULE_PATH $bak 2>/dev/null
+    or sudo install -m 0644 -o (command id -u) -g (command id -g) -- $RULE_PATH $bak
     or _die 1 "backup failed: $bak"
     echo $bak
 end
 
-function _write_rule -d 'Keep an identical file, back up a differing one' --argument-names src
-    # a run killed between install and mv leaves a root-owned .tmp
-    if test -e $RULE_PATH.tmp
-        sudo rm -f -- $RULE_PATH.tmp; or _die 1 "cannot remove a stale $RULE_PATH.tmp"
-        _msg INFO "removed a stale $RULE_PATH.tmp"
-    end
+function _write_rule -d 'Keep a current rule; back up and replace any other' --argument-names src
+    _clear_tmp
+    set -l meta (_meta)
     set -l want (_sha $src)
-    set -l have (_sha $RULE_PATH)
+    set -l have
+    # the right text in a 0666, user-owned or symlinked file is still rewritten
+    test "$meta" = "$RULE_META"; and set have (_sha $RULE_PATH)
     if test -n "$have"; and test "$have" = "$want"
         _msg OK "$RULE_PATH already current"
         return 0
     end
-    if test -e $RULE_PATH
+    if test -f $RULE_PATH
         set -l bak (_save_aside)
-        _msg INFO "existing $RULE backed up to $bak; diff (installed -> expected):"
+        _msg INFO "existing $RULE ($meta) backed up to $bak; diff (installed -> expected):"
         _diff $bak
     end
     if not sudo install -m 0644 -- $src $RULE_PATH.tmp; or not sudo mv -T -- $RULE_PATH.tmp $RULE_PATH
@@ -191,7 +205,7 @@ end
 
 # ── PREFLIGHT AND DRY-RUN ──
 function _preflight -d 'Refuse root and missing dependencies; gate udev >= 258' --argument-names mode
-    test (id -u) -ne 0; or _die 2 'run as your desktop user, not root'
+    test (command id -u) -ne 0; or _die 2 'run as your desktop user, not root'
     command -q udevadm; or _die 3 'udevadm not found'
     test -d $SYSFS/bus/usb/devices; or _die 3 "no USB sysfs under $SYSFS"
     test -e $SEAT_LATE; or _msg WARN "$SEAT_LATE missing: nothing would apply the uaccess ACL"
@@ -200,7 +214,7 @@ function _preflight -d 'Refuse root and missing dependencies; gate udev >= 258' 
     test -d $RULES_DIR; or _die 3 "missing $RULES_DIR"
     # only --install runs udevadm test -D, so only it needs udev 258
     test "$mode" = install; or return 0
-    set -l ver (udevadm --version | string match -r -- '^[0-9]+')
+    set -l ver (command udevadm --version | string match -r -- '^[0-9]+')
     test -n "$ver"; and test $ver -ge 258; or _die 3 "udevadm test -D needs systemd >= 258 (found: $ver)"
 end
 
@@ -209,6 +223,7 @@ function _dry_run -d 'Prove the staged rule tags uaccess and queues the builtin'
     set -l json (sudo udevadm test --json=short -D $_TMP $node 2>/dev/null | string collect)
     set -l why
     test -n "$json"; or set why 'udevadm test produced no JSON'
+    test -n "$json"; or test -e $node; or set why 'node vanished; replug and re-run'
     test -n "$why"; or string match -qr -- '"tags":\[[^]]*"uaccess"' $json; or set why 'no uaccess tag'
     test -n "$why"; or string match -qr -- '"command":"uaccess"' $json; or set why 'no uaccess builtin'
     if test -n "$why"
@@ -223,7 +238,10 @@ function _inventory -d 'Print the keyboard, DFU and hidraw devices present'
     set -l usb (_usb_scan)
     for u in $usb
         set -l f (string split -- '|' $u)
-        _msg INFO "$f[1] $f[2] $f[3] ($f[4]) bus $f[5] dev $f[6]"
+        set -l name $f[3]
+        test -n "$name"; or set name unnamed
+        test -n "$f[4]"; and set name "$name ($f[4])"
+        _msg INFO "$f[1] $f[2] $name bus $f[5] dev $f[6]"
     end
     if test (count $usb) -eq 0
         _msg WARN 'no Keychron or Lemokey USB device: set the toggle to Cable, or plug the receiver in'
@@ -236,17 +254,22 @@ function _inventory -d 'Print the keyboard, DFU and hidraw devices present'
     end
 end
 
-function _check -d 'Compare the installed rule with the expected text; return 4 on drift'
+function _check -d 'Compare the installed rule with the expected file; return 4 on drift'
     _inventory
     if not test -e $RULE_PATH
         _msg WARN "$RULE_PATH missing; --install writes:"
         _rule_text >&2
         return 4
     end
+    set -l meta (_meta)
+    if test "$meta" != "$RULE_META"
+        _msg WARN "$RULE_PATH is not a root-owned 0644 regular file ($meta)"
+        return 4
+    end
     set -l have (_sha $RULE_PATH)
     # quoted: an empty unquoted substitution collapses test's operands
     if test -z "$have"
-        _msg WARN "$RULE_PATH is not a readable regular file"
+        _msg WARN "$RULE_PATH could not be read"
         return 4
     end
     set -l want (_rule_text | _sha -)
@@ -262,7 +285,7 @@ function _install -d 'Dry-run the candidate, write it, reload udev, re-add the l
     _lock
     _inventory
     sudo -v; or _die 3 'sudo authentication failed'
-    set -g _TMP (mktemp -d --tmpdir keychron-udev.XXXXXX); or _die 1 'mktemp failed'
+    set -g _TMP (command mktemp -d --tmpdir keychron-udev.XXXXXX); or _die 1 'mktemp failed'
     # a failed stage would leave -D empty and the dry-run pass on /etc
     _rule_text >$_TMP/$RULE; or _die 1 "cannot stage the candidate rule in $_TMP"
     set -l nodes (_hidraw_list | string split -f1 -- '|') (_dfu_nodes)
@@ -270,7 +293,7 @@ function _install -d 'Dry-run the candidate, write it, reload udev, re-add the l
         _msg WARN 'no hidraw or DFU node to dry-run against; installing the rule unverified'
     end
     for n in $nodes
-        _dry_run $n; or _die 1 'candidate rule failed the udevadm dry-run; nothing written'
+        _dry_run $n; or _die 1 'udevadm dry-run failed; nothing written'
     end
     _write_rule $_TMP/$RULE
     sudo udevadm control --reload; or _die 1 'udevadm control --reload failed'
@@ -281,18 +304,23 @@ function _install -d 'Dry-run the candidate, write it, reload udev, re-add the l
         or _msg WARN 'udevadm trigger failed; replug the device to pick the rule up'
     end
     _verify
-    _msg INFO 'next: https://launcher.keychron.com/ in Chrome, Connect, Firmware Update'
+    _msg INFO 'next: https://launcher.keychron.com/ (Lemokey: https://launcher.lemokey.com/) in Chrome, Connect, Firmware Update'
 end
 
 function _uninstall -d 'Back up and remove the installed rule, then reload udev'
     _lock
+    if test -e $RULE_PATH; or test -e $RULE_PATH.tmp
+        sudo -v; or _die 3 'sudo authentication failed'
+        _clear_tmp
+    end
     if not test -e $RULE_PATH
         _msg OK "$RULE_PATH not present"
         return 0
     end
-    sudo -v; or _die 3 'sudo authentication failed'
-    set -l bak (_save_aside)
-    _msg INFO "$RULE backed up to $bak"
+    if test -f $RULE_PATH
+        set -l bak (_save_aside)
+        _msg INFO "$RULE backed up to $bak"
+    end
     sudo rm -f -- $RULE_PATH; or _die 1 "remove failed: $RULE_PATH"
     _msg OK "removed $RULE_PATH"
     sudo udevadm control --reload; or _die 1 'udevadm control --reload failed'
@@ -326,20 +354,24 @@ end
 # ── MAIN ──
 argparse -n keychron-udev.fish -x check,install,verify,uninstall \
     h/help V/version c/check i/install v/verify u/uninstall -- $argv; or exit 2
-if set -q _flag_help
+# -l: argparse sets locals, and an inherited or universal _flag_* is no option
+if set -ql _flag_help
     _usage
     exit 0
 end
-if set -q _flag_version
+if set -ql _flag_version
     echo "keychron-udev.fish $VERSION"
     exit 0
 end
-test (count $argv) -eq 0; or _die 2 "unexpected argument: $argv[1]"
+test (count $argv) -eq 0; or _die 2 "unexpected argument: "(string escape -- $argv[1])
 set -l mode check
-set -q _flag_install; and set mode install
-set -q _flag_verify; and set mode verify
-set -q _flag_uninstall; and set mode uninstall
+set -ql _flag_install; and set mode install
+set -ql _flag_verify; and set mode verify
+set -ql _flag_uninstall; and set mode uninstall
 _preflight $mode
 # mode is one of the four literals set above, never user text
 _$mode
-exit $status
+set -l rc $status
+# a signal in the last step meets no later _msg, so it becomes 128+N here
+test $_SIG -eq 0; or set rc (math 128 + $_SIG)
+exit $rc

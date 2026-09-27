@@ -1,6 +1,6 @@
 # keychron-udev
 
-Version 1.4.0 (2026-09-02). Script: `keychron-udev.fish`.
+Version 1.6.0 (2026-09-27).
 
 udev access for Keychron Launcher on Linux.
 
@@ -14,7 +14,7 @@ Launcher stops at "HID device connected" and a flash stalls at 0 %.
 `keychron-udev.fish` installs `/etc/udev/rules.d/70-keychron.rules`, tagging both
 device classes `uaccess` so systemd-logind grants the active seat user a dynamic
 ACL. No `input` or `plugdev` group, no `MODE="0666"`, no per-user `GROUP=`. Vid
-`3434` is Keychron and `362d` is Lemokey; both are covered.
+`3434` is Keychron, `362d` Lemokey.
 
 ## Requirements
 
@@ -22,8 +22,8 @@ ACL. No `input` or `plugdev` group, no `MODE="0666"`, no per-user `GROUP=`. Vid
 |------------|-------------------------------------------|-------|
 | OS         | Arch-based distro; udev >= 258 to install | `udevadm test -D` needs 258; the floor is `--install` only |
 | Shell      | fish >= 3.6                               | newest feature used: `path` (3.5) |
-| Privileges | sudo for `--install` and `--uninstall`    | `--check` and `--verify` never elevate |
-| Tools      | coreutils                                 | `id`, `install`, `mv -T`, `rm`, `rmdir`, `mkdir`, `mktemp`, `sha256sum`, `cat`, `date` |
+| Privileges | sudo for `--install` and `--uninstall`    | |
+| Tools      | coreutils                                 | `id`, `install`, `mv -T`, `rm`, `rmdir`, `mkdir`, `mktemp`, `sha256sum`, `stat`, `cat`, `date` |
 | Optional   | diffutils                                 | diff display on drift and before overwriting a rule |
 | Browser    | native Chrome, Chromium or Edge           | Snap and Flatpak sandboxes need device access granted separately |
 | Keyboard   | any Launcher board or receiver            | vids `3434` and `362d` |
@@ -36,9 +36,9 @@ chmod 0755 keychron-udev.fish
 ./keychron-udev.fish --install
 ```
 
-Put the board on the cable with its side toggle on Cable first, so the dry-run
-has a real hidraw node to prove against. Then open `https://launcher.keychron.com/`
-in Chrome, Connect, and use Firmware Update.
+Plug the board in with its toggle on Cable first, so the dry-run has a real
+hidraw node to test. Then open `https://launcher.keychron.com/` (Lemokey:
+`https://launcher.lemokey.com/`) in Chrome, Connect, and use Firmware Update.
 
 > [!CAUTION]
 > Do not unplug the cable during a flash, and do not put a second board into
@@ -65,7 +65,7 @@ terminal and is disabled by a non-empty `NO_COLOR` or `TERM=dumb`.
 | Path | Purpose | Mode |
 |------|---------|------|
 | `/etc/udev/rules.d/70-keychron.rules` | the installed rule | 0644 root |
-| `/etc/udev/rules.d/70-keychron.rules.tmp` | write staging, inert to udev; removed on failure or by the next `--install` | 0644 root |
+| `/etc/udev/rules.d/70-keychron.rules.tmp` | write staging, inert to udev; removed on failure or by the next `--install` or `--uninstall` | 0644 root |
 | `$XDG_STATE_HOME/keychron-udev/<timestamp>-70-keychron.rules.bak` | backup of a replaced or removed rule; millisecond timestamp | 0644 |
 | `$XDG_RUNTIME_DIR/keychron-udev-<uid>.lock` | lock held during `--install` and `--uninstall` | dir |
 | `$TMPDIR/keychron-udev.XXXXXX/` | `--install` only: stages the candidate for the dry-run, removed on exit | 0700 dir |
@@ -83,7 +83,7 @@ is created 0700.
 | 1 | error: temp dir, staging, dry-run, backup, stale `.tmp`, write, remove, reload or lock failure |
 | 2 | usage error, or run as root |
 | 3 | preflight: missing `udevadm`, `sudo`, USB sysfs or rules dir; udev < 258 for `--install`; sudo authentication failed |
-| 4 | drift (`--check`): rule missing, unreadable, not a regular file, or differing from the expected text |
+| 4 | drift (`--check`): rule missing, not a root-owned 0644 regular file, unreadable, or differing from the expected text |
 | 5 | verify failed: a node is not readable and writable for the user |
 | 129, 130, 143 | SIGHUP, SIGINT, SIGTERM after cleanup |
 
@@ -105,13 +105,12 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="2e3c", ATTRS{idProduct}=="df11", TAG+="uacce
 > The file number is load-bearing. `73-seat-late.rules` runs the `uaccess`
 > builtin, and it only sees tags added by files that sort before it. A
 > `99-keychron.rules` with `TAG+="uaccess"` alone does nothing; the popular
-> 99-numbered guides work only because they also set `GROUP=` or add the user to
-> `input`.
+> 99-numbered guides work only because they also set `MODE="0666"`, or a
+> `GROUP=` the user belongs to.
 
 The hidraw lines cover every HID interface of either vendor on the USB bus, a
-2.4 GHz receiver included; they set no `MODE=`, so the ACL is the only grant.
-The usb lines cover the three bootloaders a Launcher board re-enumerates as.
-Bluetooth-attached boards expose no `idVendor` attribute and are never matched.
+2.4 GHz receiver included. Bluetooth-attached boards are never matched: no
+Keychron or Lemokey USB device sits above their hidraw node.
 
 The ids come from Keychron's QMK fork, `github.com/Keychron/qmk_firmware`,
 measured on 2026-09-02 across its `2025q3`, `wireless_playground`,
@@ -133,12 +132,13 @@ Ultra boards are not in this tree and are not covered.
    and DFU device. The JSON must list `uaccess` under `tags` and a queued
    `uaccess` builtin under `queuedCommands`; any failure aborts before a
    write. With no live node the rule is written unverified, after a warning.
-4. Removes a stale `70-keychron.rules.tmp`, aborting if it cannot; leaves an
-   identical rule untouched.
-5. Backs a differing rule up to the state directory and shows the diff; a
-   rule that cannot be copied aborts before a write.
-6. Installs to `70-keychron.rules.tmp` (0644) and renames with `mv -T`; a
-   failed write removes the temporary file.
+4. Removes a stale `70-keychron.rules.tmp`, aborting if it cannot; leaves the
+   rule untouched when it is a root-owned 0644 regular file with the expected
+   text.
+5. Backs any other rule up to the state directory and shows the diff; a rule
+   that cannot be copied aborts before a write.
+6. Installs to `70-keychron.rules.tmp` (0644) and renames with `mv -T`, which
+   also replaces a symlink; a failed write removes the temporary file.
 7. Runs `sudo udevadm control --reload`, then
    `sudo udevadm trigger --action=add --settle` on the live nodes; a failed
    trigger is a warning, and a replug applies the rule.
@@ -159,8 +159,8 @@ attempt with its error.
 ## Uninstall
 
 `./keychron-udev.fish --uninstall` copies the rule to the state directory,
-removes it, and reloads udev. Existing nodes keep their ACL until re-added:
-replug the board or reboot. By hand:
+removes it and any stale `70-keychron.rules.tmp`, and reloads udev. Existing
+nodes keep their ACL until re-added: replug the board or reboot. By hand:
 
 ```fish
 sudo rm /etc/udev/rules.d/70-keychron.rules
@@ -178,7 +178,6 @@ a `dfu` line names the pair it enumerated as. No `dfu` line means a bootloader
 this rule does not cover: open an issue with the `lsusb` output.
 
 **Chrome is a Flatpak.** `flatpak override --user --device=all com.google.Chrome`.
-Snap Chromium is sandboxed as well.
 
 **Board is in Bluetooth mode.** Switch the toggle to Cable, or to 2.4 GHz with
 the receiver plugged in.

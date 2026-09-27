@@ -1,3 +1,33 @@
+1.6.0 (2026-09-27)
+------------------
+
+  - install: a TMPDIR holding a backslash made sha256sum escape the staged
+    name and every run rewrite a current rule; _sha strips that prefix
+  - dry-run: name a node that vanished during the test, and stop blaming the
+    candidate rule in the abort message
+  - main: print an unexpected argument escaped, so an empty one shows as ''
+  - docs: a Bluetooth board is unmatched because no Keychron or Lemokey USB
+    device sits above its hidraw node
+
+
+1.5.0 (2026-09-27)
+------------------
+
+  - settings: declare _TMP and _LOCK empty; an inherited or universal value
+    reached the exit cleanup, whose rm -rf deleted that directory
+  - main: read the flags with set -ql, as an inherited _flag_uninstall picked
+    a mode; a signal during the last step exits 128+N, not the step's status
+  - internals: run every external but sudo through `command`; a config.fish
+    alias such as mkdir -p let a second run past a held lock
+  - check: a rule that is not a root-owned 0644 regular file is drift (rc 4);
+    the expected text at 0666, owned by the user or behind a symlink passed
+  - install: rewrite such a rule, replacing a symlink, never reading a FIFO;
+    the next hint names https://launcher.lemokey.com/ for Lemokey boards
+  - uninstall: also remove a stale .rules.tmp left by a killed run
+  - output: list a USB device with no product string as "unnamed" and its
+    manufacturer only when set, not "()"
+
+
 1.4.0 (2026-09-02)
 ------------------
 
@@ -9,8 +39,6 @@
   - install: abort when a stale .rules.tmp cannot be removed
   - settings: 0x362D is Lemokey-only, the one keyboards/keychron/x* entry
     being the Lemokey X0; the DFU_IDS comment names the AT32 DFU
-  - docs: name and date the fork census (0x3434 Keychron, 0x362D Lemokey, 8K
-    boards at32-dfu); note the unverified no-node install, readable backup
 
 
 1.3.0 (2026-08-30)
@@ -19,11 +47,10 @@
   - install: check the write that stages the candidate rule; an unwritable
     temp dir left -D empty and the dry-run passed against the installed file
   - lock: name the lock directory per uid; the /tmp fallback is shared, and a
-    directory another user created there cannot be removed with rmdir
+    directory another user created there cannot be removed
   - settings: resolve XDG_STATE_HOME without declaring a local of that name,
     and treat a relative value as invalid, as the basedir spec requires
-  - readers: report a hidraw node whose uevent carries no HID_NAME as
-    "unnamed" rather than an empty pair of parentheses
+  - readers: report a hidraw node without HID_NAME as "unnamed", not "()"
   - usage: give -V --version its own line; print "verify failed" for exit 5
   - main: argparse -n is keychron-udev.fish, so an option error and the usage
     text name the same program
@@ -34,18 +61,18 @@
 
   - logging: drop the run log; every line already goes to stderr, and the file
     grew in the state directory without rotation or a size bound
-  - backup: timestamp the copy with milliseconds, so two runs inside the same
-    second no longer overwrite one another's file; both paths write 0644
+  - backup: timestamp the copy with milliseconds, so two runs in one second
+    no longer overwrite each other; both paths write 0644
   - lock: fall back to /tmp when XDG_RUNTIME_DIR is set but is not a
     directory; mkdir failed there and reported a phantom lock holder
-  - install: a failed udevadm trigger is a warning, not rc 1; the rule is
-    written and loaded by then; verify then reports whether access is live
+  - install: a failed udevadm trigger is a warning, not rc 1: the rule is
+    already loaded, and verify reports whether access is live
   - rule: the generated comments no longer repeat the vendor ids; the file
     text changes, so --check reports drift on a 1.1.0 install until re-run
   - check: hash and diff the expected rule through a pipe; only --install
     stages a temp directory, for its udevadm test -D dry-run
-  - diff: label the sides with the installed path and "expected" instead of
-    the temp path the candidate happened to occupy
+  - diff: label the sides with the installed path and "expected", not the
+    candidate's temp path
   - readers: one pass over the USB tree classifies boards and bootloaders
     together; the path builtin replaces a dirname process per device
   - preflight: drop the `id` existence check; the rules-directory check runs
